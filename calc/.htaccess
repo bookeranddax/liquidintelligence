@@ -1,0 +1,8 @@
+# .htaccess for LOCAL DEVELOPMENT - calc folder
+# This version disables password protection for local testing
+
+<IfModule mod_authz_core.c>
+  Require all granted
+</IfModule>
+
+# Note: On production (Dreamhost), use the original .htaccess with authentication

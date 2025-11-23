@@ -1,0 +1,5 @@
+AuthType Basic
+AuthName "Calculator Access"
+AuthBasicProvider file
+AuthUserFile /home/cocktail_user/.htpasswd_calc
+Require user Patreon liadmin

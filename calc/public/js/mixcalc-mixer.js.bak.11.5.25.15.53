@@ -1,0 +1,742 @@
+// /calc/public/js/mixcalc-mixer.js
+// Mixer (beta): forward-only composition per row, cached density for g↔mL,
+// auto mixture totals, inline invalid feedback, and a two-additive
+// "Aim for Target" scaffold.
+//
+// API (forward only) to /calc/api/solve.php
+//  - { mode:'abm_sbm', abm, sbm, report_T }
+//  - { mode:'abv_sugarwv', ABV, ABV_T, Sugar_WV, Sugar_WV_T, report_T }
+//
+// Rows accept either:
+//   (ABM & SBM)  OR  (ABV @20 & Sugar_WV @20)
+// and either grams or milliliters. The other quantity mirrors using cached ρ.
+//
+// Dry sugar shortcut: ABM=0 & SBM=100 → ρ ≈ 1/0.62 g/mL (no forward call).
+//
+// Mixture totals (auto):
+//   MassOut = Σ(row_grams)   [ml→g by row ρ]
+//   ABMOut  = 100 * Σ(g_i * abm_i/100) / MassOut
+//   SBMOut  = 100 * Σ(g_i * sbm_i/100) / MassOut
+//   One forward call with (ABMOut, SBMOut, T) → Density, ABV, Sugar_WV, Brix, nD
+//   VolumeOut = MassOut / Density
+//
+// UI contracts (IDs/classes):
+//   Table body:   #mix_rows
+//   Footer cells: mix_total_{abm|sbm|abv|swv|weight|volume}_cell
+//   Meta totals:  mix_meta_{wbm|rho|brix|nd}_cell   (optional)
+//   Report T:     #mix_report_T (20..30 °C)
+//   Target panel: #target_abm, #target_sbm, #target_pair, #target_solve_btn, #target_result (optional)
+
+import { solve } from './mixcalc-core.js';
+
+// -----------------------------
+// Constants & small utils
+// -----------------------------
+const RHO_SUGAR_BULK = 1 / 0.62; // ≈ 1.612903 g/mL
+const TOAST_MS = 2400;
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const nz = (x, d = null) => (x === undefined || x === null ? d : x);
+
+const num = (el) => {
+  if (!el) return null;
+  const s = String((el.value || '').trim()).replace(',', '.');
+  if (s === '') return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+};
+
+function showToast(msg) {
+  let t = document.getElementById('mix_toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'mix_toast';
+    Object.assign(t.style, {
+      position: 'fixed', right: '12px', bottom: '12px',
+      maxWidth: '64ch', padding: '10px 12px',
+      borderRadius: '8px', font: '14px/1.3 system-ui, sans-serif',
+      background: 'rgba(220,38,38,.95)', color: '#fff',
+      zIndex: '9999', boxShadow: '0 6px 20px rgba(0,0,0,.25)',
+      transition: 'opacity .25s'
+    });
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  clearTimeout(t._tid);
+  t._tid = setTimeout(() => { t.style.opacity = '0'; }, TOAST_MS);
+}
+
+function mixTemp() {
+  const el = document.getElementById('mix_report_T');
+  const v = Number((el?.value || '20').replace(',', '.'));
+  if (!Number.isFinite(v)) return 20.0;
+  const c = Math.max(10, Math.min(30, v));
+  if (el && v !== c) el.value = c.toFixed(1);
+  return c;
+}
+
+// -----------------------------
+// API wrappers (forward only)
+// -----------------------------
+async function solveFrom_ABM_SBM(ABM, SBM, T) {
+  return await solve(
+    { mode: 'abm_sbm', abm: ABM, sbm: SBM, report_T: T },
+    { endpoint: '/calc/api/solve.php' }
+  );
+}
+async function solveFrom_ABV_SWV(ABV, SWV, T) {
+  return await solve(
+    { mode: 'abv_sugarwv', ABV, ABV_T: T, Sugar_WV: SWV, Sugar_WV_T: T, report_T: T },
+    { endpoint: '/calc/api/solve.php' }
+  );
+}
+
+// -----------------------------
+// Per-row state (cached)
+// -----------------------------
+const rowState = new WeakMap(); // row → {abm,sbm,abv,swv,rho,isDrySugar,lastComp,lastQty,_sig}
+
+function getRowState(row) { return rowState.get(row) || null; }
+function setRowState(row, st) { rowState.set(row, st); }
+function clearRowState(row) { rowState.delete(row); }
+
+function defaultRowState() {
+  return {
+    abm: null, sbm: null, abv: null, swv: null, rho: null,
+    isDrySugar: false, lastComp: null, lastQty: null, _sig: null
+  };
+}
+
+function markInvalidRow(row, invalid) {
+  if (invalid) row.classList.add('mix_invalid');
+  else row.classList.remove('mix_invalid');
+}
+
+// -----------------------------
+// Build row UI helpers
+// -----------------------------
+function makeBlankRow() {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td style="position:relative;">
+      <input class="mix_name" placeholder="e.g. Ingredient">
+      <button type="button" class="row-del" title="Delete row"
+        style="position:absolute; right:0; top:0; translate: 50% -50%;
+               width:22px;height:22px;border-radius:11px;border:1px solid #ddd;
+               background:#fff; line-height:20px; font-size:14px; cursor:pointer;">×</button>
+    </td>
+    <td><input class="mix_abm" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"></td>
+    <td><input class="mix_sbm" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"></td>
+    <td><input class="mix_abv" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"></td>
+    <td><input class="mix_swv" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"></td>
+    <td><input class="mix_g"   inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"></td>
+    <td><input class="mix_ml"  inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"></td>
+  `.trim();
+  return tr;
+}
+
+function injectDeleteAffordance(row) {
+  // If first TD already has a .row-del, do nothing
+  const td = row.querySelector('td');
+  if (!td) return;
+  if (td.querySelector('.row-del')) return;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'row-del';
+  btn.title = 'Delete row';
+  btn.textContent = '×';
+  Object.assign(btn.style, {
+    position: 'absolute', right: '0', top: '0', translate: '50% -50%',
+    width: '22px', height: '22px', borderRadius: '11px',
+    border: '1px solid #ddd', background: '#fff',
+    lineHeight: '20px', fontSize: '14px', cursor: 'pointer'
+  });
+  btn.addEventListener('click', () => deleteRow(row));
+  td.style.position = 'relative';
+  td.appendChild(btn);
+}
+
+function deleteRow(row) {
+  clearRowState(row);
+  row.remove();
+  ensureTrailingBlankRow();
+  calculateMixtureDebounced();
+}
+
+function rowIsEmpty(row) {
+  return !$$('input', row).some(el => (el.value || '').trim() !== '');
+}
+
+function ensureTrailingBlankRow() {
+  const tbody = document.getElementById('mix_rows');
+  if (!tbody) return;
+
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  const hasEmpty = rows.some(rowIsEmpty);
+
+  if (!hasEmpty) {
+    const tr = makeBlankRow();
+    tbody.appendChild(tr);
+    bindRow(tr);
+  }
+}
+
+// -----------------------------
+// Row computations
+// -----------------------------
+async function updateFromComp(row, ABM, SBM, T, inputs) {
+  if (ABM === 0 && SBM === 100) {
+    // Dry sugar shortcut
+    const st = defaultRowState();
+    st.abm = 0; st.sbm = 100; st.abv = null; st.swv = null;
+    st.rho = RHO_SUGAR_BULK; st.isDrySugar = true; st.lastComp = 'comp';
+    setRowState(row, st);
+    if (inputs?.abv) inputs.abv.value = '';
+    if (inputs?.swv) inputs.swv.value = '';
+    markInvalidRow(row, false);
+    return st;
+  }
+
+  const j = await solveFrom_ABM_SBM(ABM, SBM, T);
+  if (!j || j.ok !== true || !j.outputs || typeof j.outputs.Density !== 'number') {
+    // invalid
+    const st = defaultRowState();
+    setRowState(row, st);
+    markInvalidRow(row, true);
+    const gEl = row.querySelector('.mix_g');
+    const mlEl = row.querySelector('.mix_ml');
+    if (gEl) gEl.value = '0';
+    if (mlEl) mlEl.value = '0';
+    if (inputs?.abv) inputs.abv.value = '0';
+    if (inputs?.swv) inputs.swv.value = '0';
+    showToast('Invalid row: ABM/SBM out of range.');
+    return null;
+  }
+
+  const o = j.outputs || {};
+  const st = defaultRowState();
+  st.abm = ABM; st.sbm = SBM;
+  st.abv = typeof o.ABV === 'number' ? o.ABV : null;
+  st.swv = typeof o.Sugar_WV === 'number' ? o.Sugar_WV : null;
+  st.rho = typeof o.Density === 'number' ? o.Density : null;
+  st.lastComp = 'comp';
+  setRowState(row, st);
+
+  if (inputs?.abv) inputs.abv.value = st.abv != null ? st.abv.toFixed(1) : '';
+  if (inputs?.swv) inputs.swv.value = st.swv != null ? st.swv.toFixed(1) : '';
+  markInvalidRow(row, false);
+  return st;
+}
+
+async function updateFromMeas(row, ABV, SWV, T, inputs) {
+  const j = await solveFrom_ABV_SWV(ABV, SWV, T);
+  if (!j || j.ok !== true || !j.outputs || typeof j.outputs.Density !== 'number') {
+    const st = defaultRowState();
+    setRowState(row, st);
+    markInvalidRow(row, true);
+    const gEl = row.querySelector('.mix_g');
+    const mlEl = row.querySelector('.mix_ml');
+    if (gEl) gEl.value = '0';
+    if (mlEl) mlEl.value = '0';
+    if (inputs?.abm) inputs.abm.value = '0';
+    if (inputs?.sbm) inputs.sbm.value = '0';
+    showToast('Invalid row: ABV/Sugar_WV out of range.');
+    return null;
+  }
+
+  const st = defaultRowState();
+  const o = j.outputs || {};
+  st.abv = ABV; st.swv = SWV;
+  st.abm = typeof j.abm === 'number' ? j.abm : null;
+  st.sbm = typeof j.sbm === 'number' ? j.sbm : null;
+  st.rho = typeof o.Density === 'number' ? o.Density : null;
+  st.lastComp = 'meas';
+  setRowState(row, st);
+
+  if (inputs?.abm) inputs.abm.value = st.abm != null ? st.abm.toFixed(1) : '';
+  if (inputs?.sbm) inputs.sbm.value = st.sbm != null ? st.sbm.toFixed(1) : '';
+  markInvalidRow(row, false);
+  return st;
+}
+
+function syncQuantitiesWithCachedRho(st, I) {
+  if (!st || !(st.rho > 0)) return;
+  const gVal = num(I.g);
+  const mlVal = num(I.ml);
+
+  if (st.lastQty === 'g') {
+    if (gVal != null && I.ml) I.ml.value = (gVal / st.rho).toFixed(1);
+  } else if (st.lastQty === 'ml') {
+    if (mlVal != null && I.g) I.g.value = (mlVal * st.rho).toFixed(1);
+  } else {
+    if (gVal != null && mlVal == null && I.ml) I.ml.value = (gVal / st.rho).toFixed(1);
+    if (mlVal != null && gVal == null && I.g)  I.g.value  = (mlVal * st.rho).toFixed(1);
+  }
+}
+
+// -----------------------------
+// Bind a row
+// -----------------------------
+function bindRow(row) {
+  injectDeleteAffordance(row);
+
+  const I = {
+    name: row.querySelector('.mix_name'),
+    abm:  row.querySelector('.mix_abm'),
+    sbm:  row.querySelector('.mix_sbm'),
+    abv:  row.querySelector('.mix_abv'),
+    swv:  row.querySelector('.mix_swv'),
+    g:    row.querySelector('.mix_g'),
+    ml:   row.querySelector('.mix_ml'),
+  };
+
+  let solving = false;
+  let filling = false;
+  let tId = null;
+
+  function enforceOneOf(changedKey) {
+    // Only one of (abm vs abv) and one of (sbm vs swv) should be filled
+    const groups = [['abm','abv'], ['sbm','swv']];
+    for (const [a,b] of groups) {
+      if (changedKey !== a && changedKey !== b) continue;
+      const A = I[a], B = I[b];
+      if (!A || !B) continue;
+      const aTxt = (A.value || '').trim();
+      const bTxt = (B.value || '').trim();
+      if (aTxt && bTxt) {
+        if (changedKey === a && B.value !== '') B.value = '';
+        if (changedKey === b && A.value !== '') A.value = '';
+      }
+    }
+  }
+
+  async function recomputeIfReady(changedKey) {
+    if (solving || filling) return;
+    const T = mixTemp();
+
+    const v = {
+      ABM: num(I.abm), SBM: num(I.sbm),
+      ABV: num(I.abv), SWV: num(I.swv),
+      g: num(I.g), ml: num(I.ml)
+    };
+
+    const isComp = ['abm','sbm','abv','swv'].includes(changedKey);
+    const isQty  = ['g','ml'].includes(changedKey);
+
+    let st = getRowState(row) || defaultRowState();
+
+    if (changedKey === 'abm' || changedKey === 'sbm') st.lastComp = 'comp';
+    if (changedKey === 'abv' || changedKey === 'swv') st.lastComp = 'meas';
+    if (changedKey === 'g')  st.lastQty  = 'g';
+    if (changedKey === 'ml') st.lastQty  = 'ml';
+    setRowState(row, st);
+
+    // Quantity-only edit with cached rho
+    if (isQty && st.rho > 0 && !isComp) {
+      filling = true;
+      syncQuantitiesWithCachedRho(st, I);
+      filling = false;
+      calculateMixtureDebounced();
+      return;
+    }
+
+    const haveCompPair = (v.ABM != null && v.SBM != null) || (v.ABV != null && v.SWV != null);
+    if (!isComp && !haveCompPair) return;
+
+    const sig = JSON.stringify({
+      compKey: st.lastComp, abm: v.ABM, sbm: v.SBM, abv: v.ABV, swv: v.SWV, T: +T.toFixed(3)
+    });
+    if (isComp && st._sig === sig) return;
+
+    solving = true;
+    try {
+      let ok = false;
+
+      if (st.lastComp === 'comp') {
+        if (v.ABM != null && v.SBM != null) {
+          filling = true;
+          ok = !!(await updateFromComp(row, v.ABM, v.SBM, T, { abv:I.abv, swv:I.swv }));
+          filling = false;
+        }
+      } else if (st.lastComp === 'meas') {
+        if (v.ABV != null && v.SWV != null) {
+          filling = true;
+          ok = !!(await updateFromMeas(row, v.ABV, v.SWV, T, { abm:I.abm, sbm:I.sbm }));
+          filling = false;
+        }
+      } else {
+        // First time: prefer ABM/SBM if present, else ABV/SWV
+        if (v.ABM != null && v.SBM != null) {
+          filling = true;
+          ok = !!(await updateFromComp(row, v.ABM, v.SBM, T, { abv:I.abv, swv:I.swv }));
+          filling = false;
+        } else if (v.ABV != null && v.SWV != null) {
+          filling = true;
+          ok = !!(await updateFromMeas(row, v.ABV, v.SWV, T, { abm:I.abm, sbm:I.sbm }));
+          filling = false;
+        }
+      }
+
+      if (!ok) return;
+
+      // With new rho, mirror quantities keeping last-edited side fixed
+      const st2 = getRowState(row);
+      filling = true;
+      syncQuantitiesWithCachedRho(st2, I);
+      filling = false;
+
+      st._sig = sig;
+      calculateMixtureDebounced();
+    } finally {
+      solving = false;
+    }
+  }
+
+  function onEdit(key) {
+    return () => {
+      if (filling) return;
+      enforceOneOf(key);
+      clearTimeout(tId);
+      tId = setTimeout(() => {
+        recomputeIfReady(key);
+        ensureTrailingBlankRow();
+      }, 160);
+    };
+  }
+
+  // Bind
+  for (const [k, el] of Object.entries(I)) {
+    if (!el || k === 'name') continue;
+    el.addEventListener('input', onEdit(k));
+    el.addEventListener('change', onEdit(k));
+  }
+
+  // Delete affordance (button inside first TD)
+  row.querySelector('.row-del')?.addEventListener('click', () => deleteRow(row));
+}
+
+// -----------------------------
+// Initial binding
+// -----------------------------
+function bindAllExistingRows() {
+  $$('#mix_rows tr').forEach((tr) => {
+    // Upgrade old rows (if the HTML didn't include the delete affordance)
+    injectDeleteAffordance(tr);
+    bindRow(tr);
+  });
+}
+
+// -----------------------------
+// Mixture totals
+// -----------------------------
+let mixDebounceId = null;
+function calculateMixtureDebounced() {
+  clearTimeout(mixDebounceId);
+  mixDebounceId = setTimeout(calculateMixture, 120);
+}
+
+function setCell(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value ?? '';
+}
+function setMeta(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value ?? '';
+}
+
+async function calculateMixture() {
+  const T = mixTemp();
+
+  let totalG = 0;
+  let alcG = 0;
+  let sugG = 0;
+
+  const rows = $$('#mix_rows tr');
+  for (const tr of rows) {
+    const abmEl = tr.querySelector('.mix_abm');
+    const sbmEl = tr.querySelector('.mix_sbm');
+    const abvEl = tr.querySelector('.mix_abv');
+    const swvEl = tr.querySelector('.mix_swv');
+    const gEl   = tr.querySelector('.mix_g');
+    const mlEl  = tr.querySelector('.mix_ml');
+
+    const v = {
+      ABM: num(abmEl), SBM: num(sbmEl),
+      ABV: num(abvEl), SWV: num(swvEl),
+      g: num(gEl), ml: num(mlEl)
+    };
+
+    // Resolve row if we don't have ρ cached yet
+    let st = getRowState(tr);
+    if ((!st || st.rho == null) && !rowIsEmpty(tr)) {
+      if (v.ABM === 0 && v.SBM === 100) {
+        st = defaultRowState();
+        st.abm = 0; st.sbm = 100; st.rho = RHO_SUGAR_BULK; st.isDrySugar = true;
+        setRowState(tr, st);
+      } else if (v.ABM != null && v.SBM != null) {
+        st = await updateFromComp(tr, v.ABM, v.SBM, T, { abv: abvEl, swv: swvEl });
+      } else if (v.ABV != null && v.SWV != null) {
+        st = await updateFromMeas(tr, v.ABV, v.SWV, T, { abm: abmEl, sbm: sbmEl });
+      }
+    }
+
+    if (!st || !(st.rho > 0) || st.abm == null || st.sbm == null) continue;
+
+    let g = v.g;
+    if (g == null && v.ml != null) g = v.ml * st.rho;
+    if (!(g > 0)) continue;
+
+    totalG += g;
+    alcG   += (st.abm / 100) * g;
+    sugG   += (st.sbm / 100) * g;
+  }
+
+  if (!(totalG > 0)) {
+    // Clear footer & meta
+    setCell('mix_total_weight_cell', '');
+    setCell('mix_total_volume_cell', '');
+    setCell('mix_total_abm_cell', '');
+    setCell('mix_total_sbm_cell', '');
+    setCell('mix_total_abv_cell', '');
+    setCell('mix_total_swv_cell', '');
+    setMeta('mix_meta_wbm_cell', '');
+    setMeta('mix_meta_rho_cell', '');
+    setMeta('mix_meta_brix_cell', '');
+    setMeta('mix_meta_nd_cell', '');
+    return;
+  }
+
+  const mixABM = 100 * (alcG / totalG);
+  const mixSBM = 100 * (sugG / totalG);
+
+  const j = await solveFrom_ABM_SBM(mixABM, mixSBM, T);
+  if (!j || j.ok !== true || !j.outputs) return;
+
+  const o = j.outputs;
+  const rhoOut = (typeof o.Density === 'number' && o.Density > 0) ? o.Density : null;
+  const totalMl = rhoOut ? (totalG / rhoOut) : null;
+  const wbm = 100 - mixABM - mixSBM;
+
+  // Footer cells aligned under columns
+  setCell('mix_total_weight_cell', totalG.toFixed(1));
+  setCell('mix_total_volume_cell', totalMl != null ? totalMl.toFixed(1) : '');
+  setCell('mix_total_abm_cell',    mixABM.toFixed(1));
+  setCell('mix_total_sbm_cell',    mixSBM.toFixed(1));
+  setCell('mix_total_abv_cell',    o.ABV != null ? o.ABV.toFixed(1) : '');
+  setCell('mix_total_swv_cell',    o.Sugar_WV != null ? o.Sugar_WV.toFixed(1) : '');
+
+  // Meta totals (optional UI block)
+  setMeta('mix_meta_wbm_cell',     wbm.toFixed(1));
+  setMeta('mix_meta_rho_cell',     rhoOut != null ? rhoOut.toFixed(5) : '');
+  setMeta('mix_meta_brix_cell',    o.BrixATC != null ? o.BrixATC.toFixed(2) : '');
+  setMeta('mix_meta_nd_cell',      o.nD != null ? o.nD.toFixed(5) : '');
+}
+
+// -----------------------------
+// Target solver (two additives)
+// -----------------------------
+//
+// Given a target ABM*, SBM* (mass fractions) and the present base mixture,
+// solve for non-negative grams (x,y) of two chosen additives:
+//   water:(0,0), ethanol:(1,0), sugar:(0,1)
+//
+// Base: M0, Abase, Sbase (grams).
+// Equations (let t=ABM*/100, u=SBM*/100):
+//   (a1 - t)x + (a2 - t)y = t*M0 - Abase
+//   (s1 - u)x + (s2 - u)y = u*M0 - Sbase
+//
+// If no rows or infeasible → show reason.
+//
+function bindTargetPanel() {
+  const abmEl = document.getElementById('target_abm');
+  const sbmEl = document.getElementById('target_sbm');
+  const pairEl = document.getElementById('target_pair');
+  const solveBtn = document.getElementById('target_solve_btn');
+  const out = document.getElementById('target_result');
+
+  if (!abmEl || !sbmEl || !pairEl || !solveBtn || !out) return;
+
+  function writeResult(html) { out.innerHTML = html; }
+
+  solveBtn.addEventListener('click', async () => {
+    // Make sure mixture state is current
+    await calculateMixture();
+
+    const T = mixTemp();
+    const t_abm = Number((abmEl.value || '').replace(',', '.'));
+    const t_sbm = Number((sbmEl.value || '').replace(',', '.'));
+    if (!Number.isFinite(t_abm) || !Number.isFinite(t_sbm)) {
+      showToast('Enter numeric target ABM and SBM.');
+      return;
+    }
+    if (t_abm < 0 || t_sbm < 0 || t_abm + t_sbm > 100) {
+      showToast('Target ABM/SBM must be ≥0 and sum ≤ 100.');
+      return;
+    }
+    const t = t_abm / 100, u = t_sbm / 100;
+
+    // Compute base totals from current rows (using cached rho like totals)
+    let M0 = 0, Abase = 0, Sbase = 0;
+    const rows = $$('#mix_rows tr');
+    for (const tr of rows) {
+      const st = getRowState(tr);
+      if (!st || !(st.rho > 0) || st.abm == null || st.sbm == null) continue;
+      const gEl = tr.querySelector('.mix_g');
+      const mlEl = tr.querySelector('.mix_ml');
+      let g = num(gEl);
+      if (g == null) {
+        const ml = num(mlEl);
+        if (ml != null) g = ml * st.rho;
+      }
+      if (!(g > 0)) continue;
+      M0 += g;
+      Abase += (st.abm / 100) * g;
+      Sbase += (st.sbm / 100) * g;
+    }
+
+    // No base mass?
+    if (!(M0 > 0)) {
+      showToast('Add at least one valid ingredient row before solving a target.');
+      return;
+    }
+
+    // Select additive pair
+    let a1 = 0, s1 = 0, a2 = 0, s2 = 0;
+    let label1 = '', label2 = '';
+    const sel = pairEl.value || 'water+ethanol';
+    if (sel === 'water+ethanol') {
+      a1 = 0; s1 = 0; label1 = 'Water';
+      a2 = 1; s2 = 0; label2 = 'Ethanol';
+    } else if (sel === 'water+sugar') {
+      a1 = 0; s1 = 0; label1 = 'Water';
+      a2 = 0; s2 = 1; label2 = 'Dry Sugar';
+    } else if (sel === 'ethanol+sugar') {
+      a1 = 1; s1 = 0; label1 = 'Ethanol';
+      a2 = 0; s2 = 1; label2 = 'Dry Sugar';
+    } else {
+      showToast('Unknown additive pair selection.');
+      return;
+    }
+
+    // Solve 2x2
+    // [a1 - t, a2 - t][x] = [t*M0 - Abase]
+    // [s1 - u, s2 - u][y]   [u*M0 - Sbase]
+    const A11 = a1 - t, A12 = a2 - t;
+    const A21 = s1 - u, A22 = s2 - u;
+    const B1 = t * M0 - Abase;
+    const B2 = u * M0 - Sbase;
+
+    const det = A11 * A22 - A12 * A21;
+    if (Math.abs(det) < 1e-12) {
+      writeResult(`<span class="muted">No unique solution for this target with the chosen pair.</span>`);
+      return;
+    }
+    const x = ( B1 * A22 - A12 * B2) / det;
+    const y = (-B1 * A21 + A11 * B2) / det;
+
+    if (x < -1e-6 || y < -1e-6) {
+      writeResult(`<span class="muted">Target infeasible with non-negative ${label1}/${label2} grams.</span>`);
+      return;
+    }
+
+    const xPos = Math.max(0, x);
+    const yPos = Math.max(0, y);
+
+    // Report a quick check, and show implied final grams/volume at T
+    const Mfinal = M0 + xPos + yPos;
+
+    // Forward to get target density at T to estimate final volume
+    const j = await solveFrom_ABM_SBM(t_abm, t_sbm, T);
+    let rhoT = (j && j.ok && j.outputs && j.outputs.Density > 0) ? j.outputs.Density : null;
+    const Vfinal = rhoT ? (Mfinal / rhoT) : null;
+
+    writeResult(`
+      <div><strong>Solution</strong></div>
+      <div>${label1}: <strong>${xPos.toFixed(1)} g</strong>, ${label2}: <strong>${yPos.toFixed(1)} g</strong></div>
+      <div class="muted">Implied final mass: ${Mfinal.toFixed(1)} g${Vfinal ? `, volume @${T.toFixed(1)}°C: ${Vfinal.toFixed(1)} mL` : ''}</div>
+      <div class="muted">Target ABM=${t_abm.toFixed(1)}%, SBM=${t_sbm.toFixed(1)}%</div>
+    `);
+  });
+}
+
+// -----------------------------
+// Bulk helpers (optional legacy inputs)
+// (Kept for backward compatibility in case present in HTML.)
+// -----------------------------
+function bindBulk() {
+  const sugarG  = document.getElementById('bulk_sugar_g');
+  const sugarMl = document.getElementById('bulk_sugar_ml');
+  const waterG  = document.getElementById('bulk_water_g');
+  const waterMl = document.getElementById('bulk_water_ml');
+  const ethG    = document.getElementById('bulk_eth_g');
+  const ethMl   = document.getElementById('bulk_eth_ml');
+
+  // Dry sugar 0.62 mL/g (ρ≈1.6129)
+  const sugarFromG  = () => { const g = num(sugarG);  if (g != null && sugarMl) sugarMl.value = (g * 0.62).toFixed(1); };
+  const sugarFromMl = () => { const ml = num(sugarMl); if (ml != null && sugarG)  sugarG.value = (ml / 0.62).toFixed(1); };
+
+  sugarG?.addEventListener('input',  sugarFromG);
+  sugarG?.addEventListener('change', sugarFromG);
+  sugarMl?.addEventListener('input',  sugarFromMl);
+  sugarMl?.addEventListener('change', sugarFromMl);
+
+  // Water @20 °C: ρ≈0.9982 g/mL
+  const RHO_WATER = 0.9982;
+  const waterFromG  = () => { const g = num(waterG);  if (g != null && waterMl) waterMl.value = (g / RHO_WATER).toFixed(1); };
+  const waterFromMl = () => { const ml = num(waterMl); if (ml != null && waterG)  waterG.value = (ml * RHO_WATER).toFixed(1); };
+
+  waterG?.addEventListener('input',  waterFromG);
+  waterG?.addEventListener('change', waterFromG);
+  waterMl?.addEventListener('input',  waterFromMl);
+  waterMl?.addEventListener('change', waterFromMl);
+
+  // Ethanol @20 °C: ρ≈0.7893 g/mL
+  const RHO_ETH = 0.7893;
+  const ethFromG  = () => { const g = num(ethG);  if (g != null && ethMl) ethMl.value = (g / RHO_ETH).toFixed(1); };
+  const ethFromMl = () => { const ml = num(ethMl); if (ml != null && ethG)  ethG.value = (ml * RHO_ETH).toFixed(1); };
+
+  ethG?.addEventListener('input',  ethFromG);
+  ethG?.addEventListener('change', ethFromG);
+  ethMl?.addEventListener('input',  ethFromMl);
+  ethMl?.addEventListener('change', ethFromMl);
+}
+
+// -----------------------------
+// Init
+// -----------------------------
+document.addEventListener('DOMContentLoaded', () => {
+  bindAllExistingRows();
+  ensureTrailingBlankRow();   // guarantee one empty row at start
+  bindBulk();
+  bindTargetPanel();
+
+  // Keep totals live
+  $$('#mix_rows input').forEach(inp => {
+    inp.addEventListener('input', calculateMixtureDebounced);
+    inp.addEventListener('change', calculateMixtureDebounced);
+  });
+
+  // “Report at T” → invalidate ρ (implicitly refreshed on next recompute),
+  // and trigger one totals pass.
+  const mixT = document.getElementById('mix_report_T');
+  mixT?.addEventListener('change', () => {
+    // We don't store per-row T anymore, so just refresh totals.
+    calculateMixtureDebounced();
+  });
+
+  // If any legacy buttons exist in the DOM, we neutralize or repurpose them politely.
+  document.getElementById('mix_calc_btn')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    calculateMixtureDebounced();
+  });
+  document.getElementById('mix_add_row_btn')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    ensureTrailingBlankRow();
+  });
+
+  // First compute
+  calculateMixtureDebounced();
+});

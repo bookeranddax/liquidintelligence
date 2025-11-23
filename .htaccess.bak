@@ -1,0 +1,19 @@
+AuthType Basic
+AuthName "LI Admin"
+AuthBasicProvider file
+AuthUserFile /home/cocktail_user/.htpasswd_liquid
+
+# Allow the entire /calc subtree to handle its own auth
+SetEnvIf Request_URI "^/calc(/.*)?$" CALC_OK
+
+# Let the root favicon be fetched without auth (avoids 401 noise)
+<Files "favicon.ico">
+  Require all granted
+</Files>
+
+<IfModule mod_authz_core.c>
+  <RequireAny>
+    Require env CALC_OK
+    Require user liadmin
+  </RequireAny>
+</IfModule>

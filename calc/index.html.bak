@@ -1,0 +1,1074 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Alcohol and Sugar Calculator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="icon" href="/calc/favicon.svg" type="image/svg+xml">
+  <link rel="alternate icon" href="/calc/favicon.ico">
+  <style>
+    :root {
+      --bd:#ddd; --txt:#222; --muted:#666; --warn:#9a5b00; --err:#9b1c1c;
+      --fs-pad-x:12px; /* fieldset horizontal padding */
+      --fs-border:1px; /* fieldset border width */
+    }
+    body { font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; margin:24px; color:var(--txt); }
+    form { display:grid; gap:12px; max-width:1100px; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+    fieldset { min-width:260px; border:1px solid var(--bd); border-radius:8px; padding:10px var(--fs-pad-x); }
+    legend { font-weight:600; }
+    label { display:flex; flex-direction:column; gap:6px; }
+    input, select, button { padding:8px; font:inherit; }
+    input[readonly] { background:#f8f8f8; }
+    button { border:1px solid #ccc; border-radius:8px; cursor:pointer; padding:8px 14px; }
+    .status { min-height:1.2em; color:var(--muted); }
+    .warn { color:var(--warn); background:#fff7e6; border:1px solid #ffd699; padding:8px 10px; border-radius:8px; display:none; }
+    .error { color:var(--err); background:#fdecec; border:1px solid #f5bcbc; padding:8px 10px; border-radius:8px; display:none; }
+    .hidden { display:none !important; }
+    .muted { color:var(--muted); font-size:.9em; }
+    .grid-2 { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:12px; }
+    details { border:1px solid var(--bd); border-radius:8px; padding:10px var(--fs-pad-x); }
+    details>summary { cursor:pointer; font-weight:600; }
+    .unc-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin-top:8px; }
+    .missing { outline:2px solid #e57373; background:#fff5f5; }
+    small.muted { font-size:0.85em; color:var(--muted); }
+    .align-with-fields { margin-left: calc(var(--fs-pad-x) + var(--fs-border)); }
+  </style>
+</head>
+<body>
+
+<h1 class="align-with-fields">Alcohol and Sugar Calculator</h1>
+
+<form id="calc" novalidate>
+  <div class="row align-with-fields">
+    <label><strong>Mode</strong>
+      <select name="mode" id="mode">
+        <option value="brix_density">BrixATC & Density</option>
+        <option value="abv_brix">ABV & BrixATC</option>
+        <option value="abv_density">ABV & Density</option>
+        <option value="abv_sugarwv">ABV & Sugar_WV</option>
+        <option value="abm_sbm">ABM & SBM</option>
+      </select>
+    </label>
+
+  <button type="button" id="solveBtn">Solve</button>
+
+  <label style="display:flex;align-items:center;gap:6px;">
+    <input type="checkbox" id="autosolve"> Auto-solve
+  </label>
+
+  <!-- New compact assumptions -->
+  <label style="display:flex;align-items:center;gap:6px;">
+    <input type="checkbox" id="flag_alcohol_zero"> ABM 0
+  </label>
+  <label style="display:flex;align-items:center;gap:6px;">
+    <input type="checkbox" id="flag_sugar_zero"> SBM 0
+  </label>
+  <span id="edge_select_wrap" class="muted" style="display:none; margin-left:10px;">
+    Use measurement:
+    <select id="edge_pair"></select>
+  </span>
+    <span class="status" id="status"></span>
+  </div>
+
+  <div class="row" id="inputsRow">
+    <fieldset id="fs-abv" data-modes="abv_brix abv_density abv_sugarwv">
+      <legend>ABV (% vol)</legend>
+      <label>Value
+        <input name="abv" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+               autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+      </label>
+      <label>Temp °C
+        <input name="abv_t" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+               min="10" max="30" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+      </label>
+    </fieldset>
+
+    <fieldset id="fs-brix" data-modes="brix_density abv_brix">
+      <legend>BrixATC</legend>
+      <label>Value
+        <input name="brixatc" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+               autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+      </label>
+      <label>Temp °C
+        <input name="brixatc_t" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+               min="10" max="30" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+      </label>
+    </fieldset>
+
+    <fieldset id="fs-density" data-modes="brix_density abv_density">
+      <legend>Density (g/mL)</legend>
+      <label>Value
+        <input name="density" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+               autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+      </label>
+      <label>Temp °C
+        <input name="density_t" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+               min="10" max="30" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+      </label>
+    </fieldset>
+
+    <fieldset id="fs-sugar" data-modes="abv_sugarwv">
+      <legend>Sugar_WV (g/L)</legend>
+      <label>Value
+        <input name="sugar_wv" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+               autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+      </label>
+      <label>Temp °C
+        <input name="sugar_wv_t" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+               min="10" max="30" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+      </label>
+    </fieldset>
+
+    <fieldset id="fs-comp" data-modes="abm_sbm">
+      <legend>Composition</legend>
+      <label>ABM (% mass)
+        <input name="abm" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+               autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+      </label>
+      <label>SBM (% mass)
+        <input name="sbm" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+               autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+      </label>
+    </fieldset>
+  </div>
+
+  <div class="align-with-fields">
+    <label for="report_T" class="block"><strong>Report at T (°C)</strong></label>
+    <input id="report_T" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+           value="20" min="10" max="30" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+    <div class="muted">Only affects how results are reported (no measurement needed). Range 10–30 °C.</div>
+  </div>
+
+  <details id="unc-panel" class="mt-6">
+    <summary>Measurement uncertainties (optional)</summary>
+    <div class="unc-grid" id="unc-grid">
+      <!-- ABV -->
+      <div data-unc="ABV" data-modes="abv_brix abv_density abv_sugarwv">
+        <label>± ABV (% vol)
+          <input id="u_ABV" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+                 value="0" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+        </label>
+      </div>
+      <div data-unc="ABV_T" data-modes="abv_brix abv_density abv_sugarwv">
+        <label>± ABV_T (°C)
+          <input id="u_ABV_T" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+                 value="0" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+        </label>
+      </div>
+
+      <!-- Brix -->
+      <div data-unc="BrixATC" data-modes="brix_density abv_brix">
+        <label>± BrixATC (°Bx)
+          <input id="u_BrixATC" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+                 value="0" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+        </label>
+      </div>
+      <div data-unc="BrixATC_T" data-modes="brix_density abv_brix">
+        <label>± BrixATC_T (°C)
+          <input id="u_BrixATC_T" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+                 value="0" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+        </label>
+      </div>
+
+      <!-- Density -->
+      <div data-unc="Density" data-modes="brix_density abv_density">
+        <label>± Density (g/mL)
+          <input id="u_Density" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+                 value="0" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+        </label>
+      </div>
+      <div data-unc="Density_T" data-modes="brix_density abv_density">
+        <label>± Density_T (°C)
+          <input id="u_Density_T" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+                 value="0" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+        </label>
+      </div>
+
+      <!-- Sugar_WV -->
+      <div data-unc="Sugar_WV" data-modes="abv_sugarwv">
+        <label>± Sugar_WV (g/L)
+          <input id="u_Sugar_WV" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+                 value="0" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+        </label>
+      </div>
+      <div data-unc="Sugar_WV_T" data-modes="abv_sugarwv">
+        <label>± Sugar_WV_T (°C)
+          <input id="u_Sugar_WV_T" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+                 value="0" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+        </label>
+      </div>
+
+      <!-- ABM/SBM -->
+      <div data-unc="ABM" data-modes="abm_sbm">
+        <label>± ABM (% mass)
+          <input id="u_ABM" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+                 value="0" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+        </label>
+      </div>
+      <div data-unc="SBM" data-modes="abm_sbm">
+        <label>± SBM (% mass)
+          <input id="u_SBM" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"
+                 value="0" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+        </label>
+      </div>
+    </div>
+    <div style="margin-top:10px;">
+      <button type="button" id="uncRunBtn">Calculate Uncertainty Now</button>
+      <span class="muted">Runs a Monte-Carlo estimate; may take a few seconds.</span>
+    </div>
+  </details>
+</form>
+
+<h2 class="align-with-fields">Outputs</h2>
+<div class="grid-2" id="outputs">
+  <fieldset>
+    <legend>Composition (temperature-independent)</legend>
+    <label>Alcohol By Mass (% ABM) <input id="out_abm" readonly></label>
+    <label>Sugar By Mass (% SBM) <input id="out_sbm" readonly></label>
+    <label>Water By Mass (% WBM) <input id="out_wbm" readonly></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>
+      Temperature-Dependent <span class="muted">(reported at <span id="legend_temp_note">20.0</span>°C)</span>
+    </legend>
+    <label>ABV (% vol) <input id="out_abv" readonly></label>
+    <label>Sugar Weight in Volume (g/L) <input id="out_sugar" readonly></label>
+    <label>Density (g/mL) <input id="out_density" readonly></label>
+    <label>Auto-Temp-Compensating Refractometer Brix <input id="out_brix" readonly></label>
+    <label>Refractive Index (nD) <input id="out_nd" readonly></label>
+  </fieldset>
+</div>
+
+<div class="warn" id="warn"></div>
+<div class="error" id="err"></div>
+
+<script type="module">
+  import { solve, payloadFromForm } from './public/js/mixcalc-core.js';
+
+  const form      = document.getElementById('calc');
+  const modeEl    = document.getElementById('mode');
+  const statusEl  = document.getElementById('status');
+  const warnBox   = document.getElementById('warn');
+  const errBox    = document.getElementById('err');
+  const autosolve = document.getElementById('autosolve');
+  const solveBtn  = document.getElementById('solveBtn');
+  const uncRunBtn = document.getElementById('uncRunBtn');
+  const legendTempSpan = document.getElementById('legend_temp_note');
+  const flagSugarZero   = document.getElementById('flag_sugar_zero');
+  const flagAlcoholZero = document.getElementById('flag_alcohol_zero');
+  const edgeSelectWrap = document.getElementById('edge_select_wrap');
+  const edgePairSelect = document.getElementById('edge_pair');
+
+
+  function nz(x, d){ return (x === undefined || x === null) ? d : x; }
+
+  let lastResult  = null;
+
+  // Autosolve timer & suppression window to avoid stomping MC results
+  let autoTimer;
+  let autosolveSuppressUntil = 0;
+
+  function nowMs(){
+    return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  }
+
+  function suppressAutosolve(ms){ if (ms == null) ms = 1500;
+    autosolveSuppressUntil = nowMs() + ms;
+    clearTimeout(autoTimer);
+  }
+
+  const REQUIRED = {
+    brix_density: ['brixatc','brixatc_t','density','density_t'],
+    abv_brix:     ['abv','abv_t','brixatc','brixatc_t'],
+    abv_density:  ['abv','abv_t','density','density_t'],
+    abv_sugarwv:  ['abv','abv_t','sugar_wv','sugar_wv_t'],
+    abm_sbm:      ['abm','sbm']
+  };
+
+  const ORDER = {
+    brix_density: ['fs-brix','fs-density'],
+    abv_brix:     ['fs-abv','fs-brix'],
+    abv_density:  ['fs-abv','fs-density'],
+    abv_sugarwv:  ['fs-abv','fs-sugar'],
+    abm_sbm:      ['fs-comp']
+  };
+
+  const TEMP_NAMES = new Set(['brixatc_t','density_t','abv_t','sugar_wv_t','report_T']);
+
+  const q = (sel)=>document.querySelector(sel);
+  const getInputByName = (name)=>form.querySelector(`[name="${name}"]`);
+  const read = (name)=>{
+    const el = getInputByName(name);
+    if (!el) return null;
+    const s = String(nz(el.value, '')).trim();
+    if (!s && s !== '0') return null;
+    const n = Number(s.replace(',', '.'));
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const fmt = {
+    abm:     v => v==null?'':Number(v).toFixed(1),
+    sbm:     v => v==null?'':Number(v).toFixed(1),
+    abv:     v => v==null?'':Number(v).toFixed(1),
+    sugar:   v => v==null?'':Number(v).toFixed(1),
+    density: v => v==null?'':Number(v).toFixed(5),
+    brix:    v => v==null?'':Number(v).toFixed(2),
+    nd:      v => v==null?'':Number(v).toFixed(5),
+    t:       v => v==null?'':Number(v).toFixed(1),
+  };
+
+  function fmtPM(v,u,dpV,dpU){
+    if (dpU == null) dpU = dpV;
+    if (v == null || !Number.isFinite(v)) return '';
+    const val = Number(v).toFixed(dpV);
+    return (u == null || !Number.isFinite(u)) ? val : (val + ' ± ' + Number(u).toFixed(dpU));
+  }
+
+  function clearMessages(){
+    warnBox.style.display='none'; warnBox.textContent='';
+    errBox.style.display='none';  errBox.textContent='';
+    statusEl.textContent='';
+  }
+  function blankOutputs(){
+    ['out_abm','out_sbm','out_wbm','out_abv','out_sugar','out_density','out_brix','out_nd']
+      .forEach(id=>{ const el=q('#'+id); if(el) el.value=''; });
+  }
+  function highlight(names){
+    form.querySelectorAll('input').forEach(el=>el.classList.remove('missing'));
+    (names||[]).forEach(n=>{
+      const el = (n==='report_T') ? document.getElementById('report_T') : getInputByName(n);
+      if(el) el.classList.add('missing');
+    });
+  }
+  function tempOutOfRange(name, value){
+    if(!TEMP_NAMES.has(name)) return false;
+    if(value==null) return true;
+    return (value<10 || value>30);
+  }
+
+  function defaultTempsForMode(){
+    const m = modeEl.value;
+    const need = REQUIRED[m] || [];
+    for (const n of need) {
+      if (!n.endsWith('_t')) continue;
+      const valName = n.slice(0, -2);
+      const hasValue = (read(valName) != null);
+      if (!hasValue) continue;
+      const elT = getInputByName(n);
+      if (elT && read(n) == null) elT.value = '20.0';
+    }
+  }
+
+  function clampReportT(){
+    const el = document.getElementById('report_T');
+    let v = Number(el.value||20);
+    if(!Number.isFinite(v)) v=20;
+    v = Math.max(10, Math.min(30, v));
+    el.value = v.toFixed(1);
+    return v;
+  }
+  function updateLegendTempNote(T){
+    const t = (T!=null && Number.isFinite(Number(T))) ? Number(T).toFixed(1) : document.getElementById('report_T').value || '20.0';
+    legendTempSpan.textContent = t;
+  }
+
+  function validateABMSBMRange(){
+    const m = modeEl.value;
+    if(m!=='abm_sbm') return {ok:true, msg:''};
+    const A = read('abm'); const S = read('sbm');
+    if(A==null || S==null) return {ok:true, msg:''};
+    if(A>0 && S>0){
+      if(A>60 || S>60) return {ok:false, msg:'When alcohol and sugar are both >0, valid ranges are ABM ≤ 60 and SBM ≤ 60.'};
+    } else if(A===0){
+      if(S>83) return {ok:false, msg:'With ABM=0 (no alcohol), SBM must be ≤ 83.'};
+    } else if(S===0){
+      if(A>100) return {ok:false, msg:'With SBM=0 (no sugar), ABM must be ≤ 100.'};
+    }
+    return {ok:true, msg:''};
+  }
+
+  function updateFieldsetVisibility(){
+    const m = modeEl.value;
+    document.querySelectorAll('fieldset[data-modes]').forEach(fs=>{
+      const modes=(fs.getAttribute('data-modes')||'').split(/\s+/);
+      fs.classList.toggle('hidden', !modes.includes(m));
+    });
+    const orderList = ORDER[m]||[];
+    let idx=1;
+    ['fs-abv','fs-brix','fs-density','fs-sugar','fs-comp'].forEach(id=>{
+      const el = document.getElementById(id);
+      if(!el) return;
+      el.style.order = '99';
+    });
+    orderList.forEach(id=>{
+      const el=document.getElementById(id);
+      if(el) el.style.order = String(idx++);
+    });
+  }
+  function updateUncVisibility(){
+    const m = modeEl.value;
+    document.querySelectorAll('#unc-grid [data-modes]').forEach(el=>{
+      const modes=(el.getAttribute('data-modes')||'').split(/\s+/);
+      el.classList.toggle('hidden', !modes.includes(m));
+    });
+  }
+  function reflectAutosolveUI(){
+    solveBtn.classList.toggle('hidden', autosolve.checked);
+  }
+
+  // *** FIXED ***
+  function validateInputs(requireAll = true){
+    if (requireAll == null) requireAll = true;
+    const m = modeEl.value;
+    const need = (REQUIRED[m] || []);
+    const missing = [];
+    const badTemps = [];
+
+    // clear prior highlighting
+    form.querySelectorAll('input').forEach(el => el.classList.remove('missing'));
+
+    // Edge flags
+    const zeroSugar = !!(flagSugarZero && flagSugarZero.checked);
+    const zeroAlc   = !!(flagAlcoholZero && flagAlcoholZero.checked);
+
+    // Both flags at once is invalid
+    if (zeroSugar && zeroAlc) {
+      errBox.textContent = 'Pick only one assumption: Alcohol = 0 or Sugar = 0 (not both).';
+      errBox.style.display = 'block';
+      return { missing: ['__assumptions__'], badTemps };
+    }
+
+    // Pair configs per mode
+    const pairsMap = {
+      abv_brix:     { pairs: [['abv','abv_t'],        ['brixatc','brixatc_t']], labels: ['ABV@T','BrixATC@T'] },
+      abv_density:  { pairs: [['abv','abv_t'],        ['density','density_t']], labels: ['ABV@T','Density@T'] },
+      brix_density: { pairs: [['brixatc','brixatc_t'],['density','density_t']], labels: ['BrixATC@T','Density@T'] },
+      abv_sugarwv:  { pairs: [['abv','abv_t'],        ['sugar_wv','sugar_wv_t']], labels: ['ABV@T','Sugar_WV@T'] },
+    };
+    
+    // Hard disallow using ABV when ABM 0, and Sugar_WV when SBM 0
+    if ((zeroAlc || zeroSugar) && m !== 'abm_sbm') {
+      const cfg = pairsMap[m];
+      if (cfg) {
+        const disallow = new Set();
+        if (zeroAlc)   disallow.add('abv');
+        if (zeroSugar) disallow.add('sugar_wv');
+
+        // If any disallowed pair has any input, error out early
+        for (const [vName, tName] of cfg.pairs) {
+          if (disallow.has(vName) && (read(vName)!=null || read(tName)!=null)) {
+            const which = zeroAlc ? 'ABM 0' : 'SBM 0';
+            const label = cfg.labels[cfg.pairs.findIndex(p=>p[0]===vName)];
+            errBox.textContent = `Under ${which}, the ${label} pair is not applicable. Please use the other measurement.`;
+            errBox.style.display = 'block';
+            return { missing: ['__disallowed_pair__'], badTemps };
+          }
+        }
+      }
+    }
+    // Build the set of temps we’ll actually validate for range
+    const tempNamesToCheck = new Set();
+
+    if ((zeroSugar || zeroAlc) && m !== 'abm_sbm') {
+      const cfg = pairsMap[m];
+      if (cfg) {
+        const [p1, t1] = cfg.pairs[0];
+        const [p2, t2] = cfg.pairs[1];
+
+        const v1 = read(p1) != null, tt1 = read(t1) != null;
+        const v2 = read(p2) != null, tt2 = read(t2) != null;
+
+        const pair1Complete = v1 && tt1;
+        const pair2Complete = v2 && tt2;
+
+        // Can't provide both pairs under a zero-assumption
+        if (pair1Complete && pair2Complete) {
+          const which = zeroAlc ? 'ABM 0' : 'SBM 0';
+          errBox.textContent = `Under ${which}, enter exactly one measurement pair: ${cfg.labels[0]} or ${cfg.labels[1]} (not both).`;
+          errBox.style.display = 'block';
+          return { missing: ['__both_pairs__'], badTemps };
+        }
+
+        if (requireAll) {
+          if (!pair1Complete && !pair2Complete) {
+            // Partial entries: only flag the missing piece(s) of whichever pair(s) were started
+            if (v1 || tt1) { if (!v1) missing.push(p1); if (!tt1) missing.push(t1); }
+            if (v2 || tt2) { if (!v2) missing.push(p2); if (!tt2) missing.push(t2); }
+            // If truly nothing was entered, ask for one full pair (both fields of both pairs)
+            if (!(v1 || tt1 || v2 || tt2)) missing.push(p1, t1, p2, t2);
+          }
+        }
+
+        // Only range-check temps that are present/selected
+        if (pair1Complete || tt1) tempNamesToCheck.add(t1);
+        if (pair2Complete || tt2) tempNamesToCheck.add(t2);
+      }
+    } else if (requireAll) {
+      // Default: require all inputs for the selected mode
+      for (const name of need) {
+        const v = read(name);
+        if (v == null) missing.push(name);
+      }
+      // Range-check all temps in this mode
+      need.filter(n => n.endsWith('_t')).forEach(t => tempNamesToCheck.add(t));
+    } else {
+      // Lightweight (autosolve): only check temps that are present
+      need.filter(n => n.endsWith('_t') && read(n) != null).forEach(t => tempNamesToCheck.add(t));
+    }
+
+    // Always validate report_T range
+    tempNamesToCheck.add('report_T');
+
+    // Range checks
+    for (const name of tempNamesToCheck) {
+      const v = (name === 'report_T')
+        ? Number(document.getElementById('report_T').value)
+        : read(name);
+      if (tempOutOfRange(name, v)) badTemps.push(name);
+    }
+
+    // ABM/SBM guardrails in composition mode
+    const rg = validateABMSBMRange();
+    if (!rg.ok) {
+      missing.push('abm'); missing.push('sbm');
+      errBox.textContent = rg.msg;
+      errBox.style.display = 'block';
+    }
+
+    return { missing, badTemps };
+  }
+
+  function getModePairs(){
+    const m = modeEl.value;
+    const map = {
+      abv_brix:     { pairs: [['abv','abv_t'],        ['brixatc','brixatc_t']], labels: ['ABV@T','BrixATC@T'] },
+      abv_density:  { pairs: [['abv','abv_t'],        ['density','density_t']], labels: ['ABV@T','Density@T'] },
+      brix_density: { pairs: [['brixatc','brixatc_t'],['density','density_t']], labels: ['BrixATC@T','Density@T'] },
+      abv_sugarwv:  { pairs: [['abv','abv_t'],        ['sugar_wv','sugar_wv_t']], labels: ['ABV@T','Sugar_WV@T'] },
+    };
+    return map[m] || { pairs: [], labels: [] };
+  }
+
+  function collectUncertainty(){
+    const sigma={}, sigma_T={};
+    const val = id => {
+      const el=q(id); if(!el) return null;
+      const s=String(nz(el.value,'')).trim();
+      if(s==='')return null;
+      const n=Number(s.replace(',','.'));
+      return Number.isFinite(n)?n:null;
+    };
+    const m = modeEl.value;
+
+    const setIf  = (k,id) => { const v=val(id); if(v!==null) sigma[k]=v; };
+    const setIfT = (k,id) => { const v=val(id); if(v!==null) sigma_T[k]=v; };
+
+    if(m!=='abm_sbm'){ setIf('ABV','#u_ABV'); setIfT('ABV_T','#u_ABV_T'); }
+    if(m==='brix_density' || m==='abv_brix'){ setIf('BrixATC','#u_BrixATC'); setIfT('BrixATC_T','#u_BrixATC_T'); }
+    if(m==='brix_density' || m==='abv_density'){ setIf('Density','#u_Density'); setIfT('Density_T','#u_Density_T'); }
+    if(m==='abv_sugarwv'){ setIf('Sugar_WV','#u_Sugar_WV'); setIfT('Sugar_WV_T','#u_Sugar_WV_T'); }
+    if(m==='abm_sbm'){ setIf('ABM','#u_ABM'); setIf('SBM','#u_SBM'); }
+
+    return { sigma, sigma_T };
+  }
+
+  function prefillInputsFromLastIfEmpty(){
+    if(!lastResult || !lastResult.ok) return;
+    const o = lastResult.outputs || {};
+    const m = modeEl.value;
+
+    const maybeSet = (name, val) => {
+      const el = getInputByName(name);
+      if(!el) return;
+      if(String(nz(el.value, '')).trim()===''){
+        el.value = (val==null ? '' : String(val));
+      }
+    };
+
+    if(m==='abv_brix'){
+      maybeSet('abv',       o.ABV      != null ? o.ABV.toFixed(2)      : null);
+      maybeSet('brixatc',   o.BrixATC  != null ? o.BrixATC.toFixed(2)  : null);
+      maybeSet('abv_t', '20.0'); maybeSet('brixatc_t','20.0');
+    } else if(m==='abv_density'){
+      maybeSet('abv',       o.ABV      != null ? o.ABV.toFixed(2)      : null);
+      maybeSet('density',   o.Density  != null ? o.Density.toFixed(5)  : null);
+      maybeSet('abv_t', '20.0'); maybeSet('density_t','20.0');
+    } else if(m==='brix_density'){
+      maybeSet('brixatc',   o.BrixATC  != null ? o.BrixATC.toFixed(2)  : null);
+      maybeSet('density',   o.Density  != null ? o.Density.toFixed(5)  : null);
+      maybeSet('brixatc_t','20.0');    maybeSet('density_t','20.0');
+    } else if(m==='abv_sugarwv'){
+      maybeSet('abv',       o.ABV      != null ? o.ABV.toFixed(2)      : null);
+      maybeSet('sugar_wv',  o.Sugar_WV != null ? o.Sugar_WV.toFixed(1) : null);
+      maybeSet('abv_t', '20.0'); maybeSet('sugar_wv_t','20.0');
+    } else if(m==='abm_sbm'){
+      if(lastResult.abm!=null) maybeSet('abm', Number(lastResult.abm).toFixed(1));
+      if(lastResult.sbm!=null) maybeSet('sbm', Number(lastResult.sbm).toFixed(1));
+    }
+  }
+
+function fillOutputs(json){
+  clearMessages();
+
+  // Hard error: no JSON or ok:false
+  if(!json || json.ok!==true){
+    blankOutputs();
+    let msg = (json && json.error) ? json.error : 'Unable to solve with the provided inputs.';
+    if (json && json.diagnostics && json.diagnostics.ranges) {
+      const r = json.diagnostics.ranges;
+      const sugarZeroRange = r && Array.isArray(r.SBM) && r.SBM[0] === 0 && r.SBM[1] === 0;
+      const alcZeroRange   = r && Array.isArray(r.ABM) && r.ABM[0] === 0 && r.ABM[1] === 0;
+      if (sugarZeroRange) msg += ' Tip: it looks like sugar may be ~0. Try checking “SBM 0”.';
+      if (alcZeroRange)   msg += ' Tip: it looks like alcohol may be ~0. Try checking “ABM 0”.';
+    }
+    errBox.textContent = msg;
+    errBox.style.display = 'block';
+    return;
+  }
+
+  // Soft warning: solver returns a warning with best-fit but we do NOT show outputs
+  if(json.diagnostics && json.diagnostics.warning){
+    blankOutputs();
+    const m = modeEl.value;
+    highlight((REQUIRED[m]||[]));
+    warnBox.textContent = json.diagnostics.warning;
+    warnBox.style.display = 'block';
+    return;
+  }
+
+  // Success
+  lastResult = json;
+
+  const U=json.uncertainty||{}, Uo=U.outputs||{}, o=json.outputs||{};
+  q('#out_abm').value     = fmtPM(json.abm, U.abm, 1, 1);
+  q('#out_sbm').value     = fmtPM(json.sbm, U.sbm, 1, 1);
+
+  const abmNum = Number(json.abm);
+  const sbmNum = Number(json.sbm);
+  const wbm = (Number.isFinite(abmNum) && Number.isFinite(sbmNum)) ? (100 - abmNum - sbmNum) : null;
+  q('#out_wbm').value = (wbm==null) ? '' : (Math.max(-999, Math.min(999, wbm))).toFixed(1);
+
+  q('#out_abv').value     = fmtPM(o.ABV, Uo.ABV, 1, 1);
+  q('#out_sugar').value   = fmtPM(o.Sugar_WV, Uo.Sugar_WV, 1, 1);
+  q('#out_density').value = fmtPM(o.Density, Uo.Density, 5, 5);
+  q('#out_brix').value    = fmtPM(o.BrixATC, Uo.BrixATC, 2, 2);
+  q('#out_nd').value      = fmtPM(o.nD, Uo.nD, 5, 5);
+
+  const T = (o && o.T_C) != null ? o.T_C : (json.report_T != null ? json.report_T : null);
+  updateLegendTempNote(T);
+
+  // Optional: show any range text fragments that came back
+  const diag = json.diagnostics || {};
+  const parts = [];
+  for (const [k, v] of Object.entries(diag)) {
+    const m = /^range_for_(.+)_given_(.+)$/.exec(k);
+    if (!m) continue;
+    const labelX = m[1];  const labelY = m[2];
+    if (v && v.matched) {
+      parts.push('range for ' + labelX + '@' + fmt.t(T) + ' given ' + labelY + ': ' + v.min + ' to ' + v.max);
+    }
+  }
+  if (parts.length) {
+    warnBox.textContent = parts.join('  ');
+    warnBox.style.display='block';
+  }
+}
+
+  async function safeSolve(payload){
+    try{
+      const json = await solve(payload, { endpoint:'/calc/api/solve.php' });
+      return json;
+    }catch(e){
+      blankOutputs();
+      errBox.textContent = String(e);
+      errBox.style.display = 'block';
+      return null;
+    }
+  }
+
+function prunePairsForZeroAssumption(payload){
+  const zero = !!(flagSugarZero?.checked || flagAlcoholZero?.checked);
+  const m = modeEl.value;
+  if (!zero || m === 'abm_sbm') return;
+
+  const alcoholZero = !!(flagAlcoholZero && flagAlcoholZero.checked);
+  const sugarZero   = !!(flagSugarZero && flagSugarZero.checked);
+
+  const pairsMap = {
+    'abv_brix':     [['ABV','ABV_T'],           ['BrixATC','BrixATC_T']],
+    'abv_density':  [['ABV','ABV_T'],           ['Density','Density_T']],
+    'brix_density': [['BrixATC','BrixATC_T'],   ['Density','Density_T']],
+    'abv_sugarwv':  [['ABV','ABV_T'],           ['Sugar_WV','Sugar_WV_T']],
+  };
+  const pairs = pairsMap[m];
+  if (!pairs) return;
+
+  const hasPair = ([v,t]) => (payload[v] != null) && (payload[t] != null);
+  const drop    = ([v,t]) => { delete payload[v]; delete payload[t]; };
+
+  // First, drop disallowed pairs under the zero-assumptions
+  if (alcoholZero) drop(['ABV','ABV_T']);
+  if (sugarZero)   drop(['Sugar_WV','Sugar_WV_T']);
+
+  // Then ensure at most one allowed pair remains
+  const h = pairs.map(hasPair); // [bool, bool] for current mode's two pairs
+  const presentIdx = h.map((v,i)=>v?i:-1).filter(i=>i>=0);
+
+  if (presentIdx.length >= 2) {
+    // Keep the UI selection if it's among the allowed pairs; else keep the first allowed
+    const sel = Number(edgePairSelect?.value || 0);
+    const keepIdx = presentIdx.includes(sel) ? sel : presentIdx[0];
+    const dropIdx = presentIdx.find(i => i !== keepIdx);
+    if (dropIdx != null) drop(pairs[dropIdx]);
+  }
+}
+
+
+  async function runSolve(){
+    clearMessages();
+    defaultTempsForMode();
+
+    const { missing, badTemps } = validateInputs(true);
+    if (missing.length || badTemps.length){
+      blankOutputs();
+      highlight(missing.concat(badTemps)); // no forced report_T
+      if (!errBox.textContent) {
+        errBox.textContent = 'Please enter all required fields; temperatures must be 10–30 °C.';
+      }
+      errBox.style.display = 'block';
+      return;
+    }
+
+    statusEl.textContent = 'Solving…';
+
+    const payload = payloadFromForm(form);
+    payload.report_T = clampReportT();
+
+    // Edge flags
+    const sugarZero   = !!(flagSugarZero && flagSugarZero.checked);
+    const alcoholZero = !!(flagAlcoholZero && flagAlcoholZero.checked);
+    payload.sugar_zero        = sugarZero;
+    payload.alcohol_zero      = alcoholZero;
+    payload.assume_Sugar_zero = sugarZero;
+    payload.assume_ABV_zero   = alcoholZero;
+
+    // Respect "exactly one pair" under zero-assumptions
+    prunePairsForZeroAssumption(payload);
+
+    // Drop orphan temps (e.g., Density_T without Density)
+    ([
+      ['ABV','ABV_T'],
+      ['BrixATC','BrixATC_T'],
+      ['Density','Density_T'],
+      ['Sugar_WV','Sugar_WV_T'],
+    ]).forEach(([v,t]) => {
+      if (payload[v] == null) delete payload[t];
+    });
+
+    const json = await safeSolve(payload);
+    statusEl.textContent = '';
+    if (json) fillOutputs(json);
+  }
+
+  async function forwardFromLastABMSBM(){
+    if(!lastResult || !lastResult.ok) return;
+    const {abm,sbm} = lastResult;
+    if(abm==null || sbm==null) return;
+    statusEl.textContent='Loading from previous result…';
+    const json = await safeSolve({ mode:'abm_sbm', abm, sbm, report_T: clampReportT() });
+    statusEl.textContent='';
+    if(json) fillOutputs(json);
+  }
+
+  async function runUncSolve(){
+    clearMessages();
+    defaultTempsForMode();
+
+    const { missing, badTemps } = validateInputs(true);
+    if (missing.length || badTemps.length){
+      blankOutputs();
+      highlight(missing.concat(badTemps)); // no forced report_T
+      if (!errBox.textContent) {
+        errBox.textContent = 'Please enter all required fields; temperatures must be 10–30 °C.';
+      }
+      errBox.style.display = 'block';
+      return;
+    }
+
+    // Prevent autosolve from overwriting MC results
+    suppressAutosolve(2000);
+
+    statusEl.textContent = 'Running uncertainty…';
+    const prev = uncRunBtn.textContent;
+    uncRunBtn.disabled = true;
+    uncRunBtn.textContent = 'Calculating…';
+
+    try {
+      const payload = payloadFromForm(form);
+      payload.report_T = clampReportT();
+
+      // Edge flags
+      const sugarZero   = !!(flagSugarZero && flagSugarZero.checked);
+      const alcoholZero = !!(flagAlcoholZero && flagAlcoholZero.checked);
+      payload.sugar_zero        = sugarZero;
+      payload.alcohol_zero      = alcoholZero;
+      payload.assume_Sugar_zero = sugarZero;
+      payload.assume_ABV_zero   = alcoholZero;
+
+      // Respect "exactly one pair" under zero-assumptions
+      prunePairsForZeroAssumption(payload);
+
+      // Drop orphan temps
+      ([
+        ['ABV','ABV_T'],
+        ['BrixATC','BrixATC_T'],
+        ['Density','Density_T'],
+        ['Sugar_WV','Sugar_WV_T'],
+      ]).forEach(([v,t]) => {
+        if (payload[v] == null) delete payload[t];
+      });
+
+      // Uncertainty inputs
+      const { sigma, sigma_T } = collectUncertainty();
+      if (Object.keys(sigma).length)   payload.sigma   = sigma;
+      if (Object.keys(sigma_T).length) payload.sigma_T = sigma_T;
+
+      const json = await safeSolve(payload);
+      if (json) fillOutputs(json);
+    } finally {
+      statusEl.textContent = '';
+      uncRunBtn.textContent = prev;
+      uncRunBtn.disabled = false;
+      suppressAutosolve(500);
+    }
+  }
+
+  // Autosolve (never sends uncertainty)
+  function queueAuto(){
+    if(!autosolve.checked) return;
+    if (nowMs() < autosolveSuppressUntil) return;
+    defaultTempsForMode();
+    const {missing,badTemps}=validateInputs(false);
+    if(badTemps.length){ statusEl.textContent='Temperature must be 10–30 °C.'; return; }
+    if(missing.length){  statusEl.textContent='Waiting for required inputs…'; return; }
+    clearTimeout(autoTimer);
+    statusEl.textContent='Solving…';
+    autoTimer = setTimeout(runSolve, 250);
+  }
+
+  function updateVisibility(){
+    updateFieldsetVisibility();
+    updateUncVisibility();
+    reflectAutosolveUI();
+  }
+
+function updateEdgeUI(){
+  const zero = !!(flagSugarZero?.checked || flagAlcoholZero?.checked);
+  const m = modeEl.value;
+  const cfg = getModePairs(); // {pairs: [[v,t],[v,t]], labels: [...]}
+
+  // Gray out the flags entirely in forward mode
+  if (m === 'abm_sbm') {
+    if (edgeSelectWrap) edgeSelectWrap.style.display = 'none';
+    // disable flags in forward mode (they have no meaning there)
+    if (flagSugarZero)   { flagSugarZero.checked = false;  flagSugarZero.disabled = true; }
+    if (flagAlcoholZero) { flagAlcoholZero.checked = false; flagAlcoholZero.disabled = true; }
+    // re-enable all fields
+    (cfg.pairs.flat()).forEach(name=>{
+      const el = getInputByName(name);
+      if (el) el.disabled = false;
+    });
+    return;
+  } else {
+    // ensure flags are enabled in inversion modes
+    if (flagSugarZero)   flagSugarZero.disabled   = false;
+    if (flagAlcoholZero) flagAlcoholZero.disabled = false;
+  }
+  
+    // NEW: If no zero-assumption is selected, hide the selector and enable both pairs
+  if (!zero) {
+    if (edgeSelectWrap) edgeSelectWrap.style.display = 'none';
+    // enable all inputs for the current mode's pairs
+    (cfg.pairs.flat()).forEach(name => {
+      const el = getInputByName(name);
+      if (el) el.disabled = false;
+    });
+    return;
+  }
+
+  if (!cfg.pairs.length) {
+    if (edgeSelectWrap) edgeSelectWrap.style.display = 'none';
+    return;
+  }
+
+  // Start from the unfiltered pair list/labels
+  let P = cfg.pairs.slice();   // e.g., [['abv','abv_t'], ['brixatc','brixatc_t']]
+  let L = cfg.labels.slice();  // e.g., ['ABV@T','BrixATC@T']
+
+  // Remove disallowed pairs under zero-assumptions:
+  //  - ABM 0 (alcohol_zero) => disallow any pair that measures ABV
+  //  - SBM 0 (sugar_zero)   => disallow any pair that measures Sugar_WV
+  if (zero) {
+    const disallowABV   = !!flagAlcoholZero?.checked;
+    const disallowSugar = !!flagSugarZero?.checked;
+
+    const keepIdx = [];
+    for (let i = 0; i < P.length; i++) {
+      const pair = P[i]; // ['abv','abv_t'] etc (lowercase names here)
+      const vName = pair[0]; // value field name
+      const isABV   = /^abv$/i.test(vName);
+      const isSugar = /^sugar_wv$/i.test(vName);
+      if ((disallowABV && isABV) || (disallowSugar && isSugar)) {
+        // drop this pair
+      } else {
+        keepIdx.push(i);
+      }
+    }
+    P = keepIdx.map(i => P[i]);
+    L = keepIdx.map(i => L[i]);
+  }
+
+  // If no pairs remain (edge-flag disallowed all), just hide control and re-enable everything
+  if (!P.length) {
+    if (edgeSelectWrap) edgeSelectWrap.style.display = 'none';
+    (cfg.pairs.flat()).forEach(name=>{
+      const el = getInputByName(name);
+      if (el) el.disabled = false;
+    });
+    return;
+  }
+
+  // If exactly one pair remains, hide the dropdown and force that pair
+  if (P.length === 1) {
+    if (edgeSelectWrap) edgeSelectWrap.style.display = 'none';
+    const keep = P[0];
+    const drop = cfg.pairs.filter(p => p !== keep).flat(); // disable all others
+    const setDisabled = (names, disabled)=>{
+      names.forEach(n=>{
+        const el = getInputByName(n);
+        if (el) {
+          el.disabled = !!disabled;
+          if (disabled) el.value = '';
+        }
+      });
+    };
+    setDisabled(keep, false);
+    setDisabled(drop, true);
+    return;
+  }
+
+  // Two allowed pairs: show dropdown and use selection
+  if (edgeSelectWrap) edgeSelectWrap.style.display = '';
+  if (edgePairSelect) {
+    // Rebuild options if mode changed or we previously had a different option set
+    const key = m + '::' + L.join('|');
+    if (edgePairSelect.dataset.key !== key) {
+      edgePairSelect.dataset.key = key;
+      edgePairSelect.innerHTML = '';
+      L.forEach((label, idx)=>{
+        const opt = document.createElement('option');
+        opt.value = String(idx);
+        opt.textContent = label;
+        edgePairSelect.appendChild(opt);
+      });
+      edgePairSelect.value = '0';
+    }
+
+    const sel = Number(edgePairSelect.value || 0);
+    const keep = P[sel];
+    const drop = P[sel ^ 1];
+
+    const setDisabled = (names, disabled)=>{
+      names.forEach(n=>{
+        const el = getInputByName(n);
+        if (el) {
+          el.disabled = !!disabled;
+          if (disabled) el.value = '';
+        }
+      });
+    };
+    // Apply to the two allowed pairs
+    setDisabled(keep, false);
+    setDisabled(drop, true);
+
+    // Also make sure any pairs that were removed are disabled/cleared
+    const removed = cfg.pairs.filter(orig => !P.includes(orig)).flat();
+    setDisabled(removed, true);
+  }
+}
+
+
+
+  form.addEventListener('submit', (e)=>{ e.preventDefault(); });
+
+  modeEl.addEventListener('change', async ()=>{
+    updateVisibility();
+    updateEdgeUI();
+    prefillInputsFromLastIfEmpty();
+
+    const {missing,badTemps} = validateInputs(false);
+    if(missing.length || badTemps.length){
+      await forwardFromLastABMSBM();
+    }
+    queueAuto();
+  });
+
+  solveBtn.addEventListener('click', runSolve);
+
+  document.getElementById('report_T').addEventListener('change', ()=>{
+    updateLegendTempNote(); // show what the user picked
+    if(!autosolve.checked) forwardFromLastABMSBM();
+    queueAuto();
+  });
+
+  // General inputs: skip report_T for 'input' autosolve (use change instead)
+  form.querySelectorAll('input, select').forEach(el=>{
+    if (el.id === 'report_T') return;
+    el.addEventListener('input', queueAuto);
+    el.addEventListener('change', queueAuto);
+  });
+
+  autosolve.addEventListener('change', reflectAutosolveUI);
+
+  if (uncRunBtn) uncRunBtn.addEventListener('click', runUncSolve);
+
+  // Init
+  updateVisibility();
+  reflectAutosolveUI();
+  updateLegendTempNote();
+  updateEdgeUI();
+
+  function syncAssumptionFlags(e){
+    if (!flagSugarZero || !flagAlcoholZero) return;
+
+    // Make them mutually exclusive
+    if (e && e.target === flagSugarZero && flagSugarZero.checked) {
+      flagAlcoholZero.checked = false;
+    } else if (e && e.target === flagAlcoholZero && flagAlcoholZero.checked) {
+      flagSugarZero.checked = false;
+    }
+   
+   updateEdgeUI();
+    // Clear any stale messages when toggling assumptions
+    clearMessages();
+
+    // Re-evaluate autosolve/requirements immediately
+    defaultTempsForMode();
+    queueAuto();
+  }
+
+  flagSugarZero?.addEventListener('change', syncAssumptionFlags);
+  flagAlcoholZero?.addEventListener('change', syncAssumptionFlags);
+
+  edgePairSelect?.addEventListener('change', ()=>{
+    updateEdgeUI();
+    queueAuto();
+  });
+
+</script>
+
+</body>
+</html>

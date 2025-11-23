@@ -1,0 +1,7 @@
+AuthType Basic
+AuthName "Liquid Intelligence Admin"
+AuthUserFile "/home/cocktail_user/.htpasswd_liquid"
+Require valid-user
+
+# Keep this folder from being indexed
+Options -Indexes

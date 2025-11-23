@@ -1,0 +1,5 @@
+RewriteEngine Off
+AuthType Basic
+AuthName "Liquid Intelligence Admin"
+AuthUserFile /home/cocktail_user/.htpasswd_liquid
+Require valid-user

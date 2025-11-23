@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cocktail Analyzer</title>
+  <style>
+    :root{
+      --muted:#6b7280;
+      --border:#e5e7eb;
+      --bg:#fafafa;
+      --panel:#f6f8fa;
+      --ok:#16a34a;
+      --warn:#f59e0b;
+      --err:#dc2626;
+    }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;line-height:1.4;margin:20px}
+    input,select,button{font-size:14px;padding:6px 8px}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+    .right{margin-left:auto}
+    .muted{color:var(--muted)}
+    #status{white-space:pre-wrap;background:var(--panel);border:1px solid var(--border);padding:8px;border-radius:6px;margin:8px 0}
+
+    /* Tabs */
+    .tabs{display:flex;gap:6px;margin:8px 0}
+    .tab{border:1px solid var(--border);background:white;padding:6px 10px;border-radius:8px;cursor:pointer}
+    .tab[aria-selected="true"]{background:#111827;color:#fff;border-color:#111827}
+
+    /* Combobox fallbacks hidden */
+    #drinkSelect,
+    #ingredientSelect { display:none; }
+
+    table{border-collapse:collapse;width:100%;margin-top:12px}
+    th,td{border:1px solid #ddd;padding:6px;text-align:left;vertical-align:top}
+    th{background:#fff}
+    .num{text-align:right}
+    .col-spoken{width:18%}
+    .col-ml{width:10%}
+    .col-ing{width:28%}
+
+    tfoot td{background:#fff}
+
+    /* Mode theming for the grid (recipe vs optimize) */
+    .mode-recipe table thead th{background:#f8fafc}
+    .mode-opt table thead th{background:#fff7ed}
+
+    /* Panels */
+    .panel{border:1px solid var(--border);background:var(--panel);border-radius:8px;padding:10px;margin-top:10px}
+    .panel h3{margin:0 0 6px 0;font-size:15px}
+
+    /* Diagnostics */
+    #diagPanel{margin-top:.5rem}
+    #diagPanel table{border-collapse:collapse;width:100%}
+    #diagPanel th,#diagPanel td{border-bottom:1px solid var(--border);padding:4px}
+    #diagSummary{font-weight:600;margin:.25rem 0}
+
+    /* Binding highlight (kept for future use) */
+    .mlcell.binding{ background:#fff1f2; box-shadow: inset 0 0 0 1px #fca5a5; }
+
+    /* Hide sections by mode */
+    .hidden{display:none !important}
+
+    /* ===== Modal (spoken config) ===== */
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,.25);display:flex;align-items:center;justify-content:center;z-index:9999}
+    .modal.hidden{display:none}
+    .modal-card{background:#fff;border:1px solid var(--border);border-radius:10px;min-width:720px;max-width:900px;box-shadow:0 10px 40px rgba(0,0,0,.15)}
+    .modal-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--border)}
+    .modal-body{padding:10px 12px}
+    .modal .x{font-size:18px;line-height:1;padding:2px 8px}
+
+    /* Converted banner */
+    .banner{background:#eef2ff;border:1px solid #c7d2fe;color:#1e3a8a;border-radius:8px;padding:8px 10px;margin:10px 0}
+    .pill{display:inline-block;background:#111827;color:#fff;border-radius:999px;padding:2px 8px;font-size:12px;margin-left:8px}
+  </style>
+</head>
+<body class="mode-recipe">
+  <h1>Cocktail Analyzer</h1>
+
+  <div id="status" class="muted">Loading…</div>
+
+  <!-- Top bar -->
+  <div class="row">
+    <label>Drink:</label>
+    <input id="drinkInput" placeholder="Type to search or Enter to create…" />
+    <select id="drinkSelect" aria-label="Drinks"></select>
+
+    <!-- NEW: Version dropdown (populated by app.js loadVersionFamily) -->
+    <label style="margin-left:10px">Version:</label>
+    <select id="versionSelect" disabled title="Single version" style="min-width:130px"></select>
+
+    <!-- FIX: id must be btnSpokenConfig to match app.js -->
+    <button id="btnSpokenConfig" title="Configure spoken units">Configure…</button>
+
+    <span class="right"></span>
+    <button id="authBtn" title="Log in to edit">Log in</button>
+
+  </div>
+
+
+  <!-- Tabs for Recipe vs Optimize -->
+  <div class="tabs" role="tablist" aria-label="Mode">
+    <button id="tabRecipe" class="tab" role="tab" aria-selected="true">Recipe</button>
+    <button id="tabOptimize" class="tab" role="tab" aria-selected="false">Optimize</button>
+  </div>
+
+  <!-- Batch / Convert (display only) -->
+  <fieldset class="panel" id="scalePanel">
+    <legend>Batch / Convert (display only)</legend>
+    <div class="row">
+      <label>Map:</label>
+      <input id="pUnits" type="number" step="0.1" style="width:120px" placeholder="e.g. 30" value="30" />
+      <span>→</span>
+      <input id="bUnits" type="number" step="0.1" style="width:120px" placeholder="e.g. 25" value="30" />
+      <span class="muted">Examples: 30→25 (swap jigger), 45→750 (use 750 mL bottle), 1→2 (double), 172.1→5000 (target yield)</span>
+      <span class="right"></span>
+      <button id="resetScale" title="Show original recipe amounts">Reset</button>
+    </div>
+    <div id="convertedBanner" class="banner hidden">
+      Converted view <span id="scaleFromTo"></span>
+      <span id="scaleFactorPill" class="pill"></span>
+    </div>
+  </fieldset>
+
+  <!-- Drink info -->
+  <fieldset class="panel" id="drinkInfo">
+    <legend>Drink Info</legend>
+    <div class="row">
+      <label>Type:</label>
+      <select id="drinkType"></select>
+
+      <label style="margin-left:12px">Notes:</label>
+      <input id="drinkNotes" style="width:280px" />
+
+      <label style="margin-left:12px">Source:</label>
+      <input id="drinkSource" style="width:200px" />
+
+      <label style="margin-left:12px">Year:</label>
+      <input id="drinkDate" type="number" step="1" style="width:90px" />
+
+      <label style="margin-left:12px"><input type="checkbox" id="drinkLocked" /> Locked</label>
+
+      <button id="saveDrink" style="margin-left:12px">Save</button>
+      <button id="cloneDrink" title="Create Variant">Create Variant</button>
+      
+      <label style="margin-left:12px"><input type="checkbox" id="drinkPublic" /> Public</label>
+      <span id="visibilityBadge" class="pill">Private</span>
+
+    </div>
+  </fieldset>
+
+  <!-- Grid controls -->
+  <div class="row" style="margin-top:8px">
+    <label>Show units:</label>
+    <select id="displayUnits">
+      <option value="both">Both</option>
+      <option value="spoken">Spoken</option>
+      <option value="ml">Milliliters</option>
+    </select>
+  </div>
+
+  <!-- Recipe grid -->
+  <table id="grid">
+    <thead>
+      <tr>
+        <th class="col-ing">Ingredient</th>
+        <th class="num col-spoken spoken-col">Spoken</th>
+        <th class="num col-ml ml-col">ml</th>
+        <th class="num">Alcohol (mL)</th>
+        <th class="num">Sugar (g)</th>
+        <th class="num">Acid (g)</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+    <tfoot>
+      <!-- Totals -->
+      <tr>
+        <td style="text-align:right;font-weight:bold">Totals:</td>
+        <td class="num spoken-col"><span id="t_spoken"></span></td>
+        <td class="num ml-col"><span id="t_ml"></span></td>
+        <td class="num"><span id="t_alc_ml"></span></td>
+        <td class="num"><span id="t_sugar_g"></span></td>
+        <td class="num"><span id="t_acid_g"></span></td>
+        <td></td>
+      </tr>
+      <!-- Percents (undiluted) -->
+      <tr>
+        <td style="text-align:right;font-weight:bold">Percents:</td>
+        <td class="num spoken-col"></td>
+        <td class="num ml-col"></td>
+        <td class="num"><span id="t_abv_pct"></span>%</td>
+        <td class="num"><span id="t_sugar_pct"></span>%</td>
+        <td class="num"><span id="t_acid_pct"></span>%</td>
+        <td></td>
+      </tr>
+      <!-- Dilution controls row (between undiluted and diluted) -->
+      <tr>
+        <td style="text-align:right;font-weight:bold">Dilution:</td>
+        <td colspan="5">
+          <label>Mode:</label>
+          <select id="dilutionMode" style="width:140px">
+            <option value="shake">Shake</option>
+            <option value="stir">Stir</option>
+            <option value="built">Built</option>
+            <option value="blender">Blender</option>
+            <option value="custom">Custom</option>
+          </select>
+          <label id="dilutionPctLabel" style="margin-left:12px">Percent (computed):</label>
+          <input id="dilutionPct" type="number" step="0.1" value="0" style="width:90px" disabled />
+          <span class="muted">(% water added relative to undiluted volume)</span>
+        </td>
+        <td></td>
+      </tr>
+      <!-- Diluted -->
+      <tr>
+        <td style="text-align:right;font-weight:bold">Diluted <span id="d_mode_label"></span>:</td>
+        <td class="num spoken-col">
+          <span id="d_spoken"></span>
+          <span class="muted"></span>
+        </td>
+        <td class="num ml-col">
+          <span id="d_total_ml"></span>
+          <span class="muted">(+<span id="d_water_ml"></span>)</span>
+        </td>
+        <td class="num"><span id="d_abv_pct"></span>%</td>
+        <td class="num"><span id="d_sugar_pct"></span>%</td>
+        <td class="num"><span id="d_acid_pct"></span>%</td>
+        <td></td>
+      </tr>
+      <!-- Targets rows (mix vs diluted) -->
+      <tr id="targetsMixRow">
+        <td style="text-align:right;font-weight:bold;color:#1f2937;">Targets (Mix):</td>
+        <td class="num spoken-col"></td>
+        <td class="num ml-col"><span id="tgt_disp_ml_mix"></span></td>
+        <td class="num"><span id="tgt_disp_abv_mix"></span>%</td>
+        <td class="num"><span id="tgt_disp_sugar_mix"></span>%</td>
+        <td class="num"><span id="tgt_disp_acid_mix"></span>%</td>
+        <td></td>
+      </tr>
+      <tr id="targetsDilutedRow" class="hidden">
+        <td style="text-align:right;font-weight:bold;color:#1f2937;">Targets (Diluted):</td>
+        <td class="num spoken-col"><span id="tgt_disp_spoken_dil"></span></td>
+        <td class="num ml-col"><span id="tgt_disp_ml_dil"></span></td>
+        <td class="num"><span id="tgt_disp_abv_dil"></span>%</td>
+        <td class="num"><span id="tgt_disp_sugar_dil"></span>%</td>
+        <td class="num"><span id="tgt_disp_acid_dil"></span>%</td>
+        <td></td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <!-- Add / Update panel (moved below grid) -->
+  <fieldset class="panel" id="addPanel">
+    <legend>Add / Update Ingredient</legend>
+    <div class="row">
+      <label>Ingredient:</label>
+      <input id="ingInput" placeholder="Type to search or Enter to create…" />
+      <select id="ingredientSelect" aria-label="Ingredients"></select>
+    </div>
+    <div class="row">
+      <label>ml:</label>
+      <input id="ml" type="number" step="0.1" style="width:90px" />
+
+      <label style="margin-left:12px">oz:</label>
+      <input id="oz" type="number" step="0.01" style="width:90px" />
+
+      <label style="margin-left:12px">bsp:</label>
+      <input id="bsp" type="number" step="0.1" style="width:90px" />
+
+      <label style="margin-left:12px">dashes:</label>
+      <input id="dash" type="number" step="0.1" style="width:90px" />
+
+      <label style="margin-left:12px">drops:</label>
+      <input id="drop" type="number" step="1" style="width:90px" />
+
+      <label style="margin-left:12px">spoken:</label>
+      <input id="spoken" placeholder="full 1 3/4" style="width:140px" />
+
+      <label style="margin-left:12px">Pos:</label>
+      <input id="position" type="number" step="1" style="width:70px" />
+
+      <button id="add">Add / Update</button>
+    </div>
+  </fieldset>
+
+  <!-- Constraints (visible only in Optimize mode) -->
+  <fieldset class="panel" id="constraintsPanel">
+    <legend>Optimizer constraints (selected ingredient)</legend>
+    <div class="row">
+      <label><input type="checkbox" id="optHold"> Hold</label>
+      <label style="margin-left:12px">Low (mL):</label>
+      <input id="optLow" type="number" step="0.1" style="width:90px">
+      <label style="margin-left:12px">High (mL):</label>
+      <input id="optHigh" type="number" step="0.1" style="width:90px">
+      <button id="clearAllConstraints" class="right">Clear ALL constraints…</button>
+    </div>
+  </fieldset>
+
+  <!-- Optimize panel (visible only in Optimize mode) -->
+  <fieldset class="panel" id="optPanel">
+    <legend>Optimization</legend>
+    <div class="row">
+      <label style="margin-right:8px">Optimize basis:</label>
+      <label><input type="radio" name="basis" id="basis_mix" value="undiluted" checked> Mix (undiluted)</label>
+      <label style="margin-left:12px"><input type="radio" name="basis" id="basis_diluted" value="diluted"> Diluted (served)</label>
+    </div>
+
+    <div class="row">
+      <label><input type="checkbox" id="lockVolume" checked> Lock volume to target</label>
+      <label style="margin-left:16px"><input type="checkbox" id="spokenQuant"> Quantize to “Spoken” units</label>
+    </div>
+
+    <div class="row">
+      <label>Target Vol (mL):</label>
+      <input id="tgt_vol" type="number" step="0.1" style="width:120px" />
+      <label style="margin-left:12px">% ABV:</label>
+      <input id="tgt_abv" type="number" step="0.01" style="width:90px" />
+      <label style="margin-left:12px">% Sugar:</label>
+      <input id="tgt_sugar" type="number" step="0.01" style="width:90px" />
+      <label style="margin-left:12px">% Acid:</label>
+      <input id="tgt_acid" type="number" step="0.01" style="width:90px" />
+      <button id="matchTargets">Match Targets</button>
+      <button id="copyPasteTargets" class="right">Paste Targets</button>
+    </div>
+
+    <details id="advancedDiagnostics" style="margin-top:0.5rem;">
+      <summary style="cursor:pointer; font-weight:600;">Advanced diagnostics</summary>
+      <div id="diagPanel">
+        <div id="diagSummary"></div>
+        <table>
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th style="text-align:right">Target</th>
+              <th style="text-align:right">Achieved</th>
+              <th style="text-align:right">Δ</th>
+            </tr>
+          </thead>
+          <tbody id="diagBody"></tbody>
+        </table>
+        <div id="diagBullets" style="margin:.5rem 0; font-size:13px; color:#374151;"></div>
+      </div>
+    </details>
+  </fieldset>
+
+  <p class="muted">Public data + your private rows (when logged in). Your changes are private to you and admins.</p>
+
+<!-- ===== CONFIGURE MODAL (Tabbed) ===== -->
+<div id="spokenModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cfgTitle">
+  <div class="modal-card" style="min-width:720px; max-width:900px;">
+    <div class="modal-head">
+      <h3 id="cfgTitle">Configure</h3>
+      <button id="sp_close" class="x" aria-label="Close">×</button>
+    </div>
+
+    <!-- Tablist -->
+    <div class="tabs" role="tablist" aria-label="Configuration sections">
+      <button id="tabCfgSpoken"   class="tab" role="tab" aria-selected="true"  aria-controls="paneCfgSpoken">Spoken Units</button>
+      <button id="tabCfgDilution" class="tab" role="tab" aria-selected="false" aria-controls="paneCfgDilution">Dilution</button>
+    </div>
+
+    <!-- Tab panels (same dialog, just hide/show) -->
+    <div class="modal-body" style="min-height: 340px;">
+      <!-- ===== SPOKEN TAB ===== -->
+      <section id="paneCfgSpoken" role="tabpanel" aria-labelledby="tabCfgSpoken">
+        <div class="row">
+          <label style="width:180px">Standard pour (mL):</label>
+          <input id="sp_stPour" type="number" step="0.1" style="width:120px">
+        </div>
+
+        <div class="row">
+          <label style="width:180px">Display mode:</label>
+          <select id="sp_mode" style="width:220px">
+            <option value="named">Named unit</option>
+            <option value="ml">Rounded milliliters</option>
+          </select>
+        </div>
+
+        <!-- Named Unit -->
+        <fieldset id="sp_namedGroup" class="panel">
+          <legend>Named unit</legend>
+          <div class="row">
+            <label style="width:180px">Unit name:</label>
+            <select id="sp_unitPreset" style="width:160px">
+              <option value="ounce">ounce</option>
+              <option value="part">part</option>
+              <option value="custom">custom…</option>
+            </select>
+            <input id="sp_unitCustom" placeholder="custom name" style="width:160px" disabled>
+          </div>
+
+          <div class="row">
+            <label style="width:180px">Divisions ≥ 1 pour:</label>
+            <select id="sp_unitDiv_named" style="width:160px">
+              <option value="4">quarters (4)</option>
+              <option value="5">fifths (5)</option>
+              <option value="8">eighths (8)</option>
+              <option value="10">tenths (10)</option>
+            </select>
+          </div>
+
+          <div class="row">
+            <label><input id="sp_hAcc" type="checkbox"> Use smaller divisions below one pour</label>
+          </div>
+
+          <div class="row" id="sp_hAccRow_named">
+            <label style="width:180px">Divisions &lt; 1 pour:</label>
+            <select id="sp_hAunitDiv_named" style="width:160px">
+              <option value="8">eighths (8)</option>
+              <option value="10">tenths (10)</option>
+            </select>
+          </div>
+        </fieldset>
+
+        <!-- Rounded mL -->
+        <fieldset id="sp_mlGroup" class="panel">
+          <legend>Rounded milliliters</legend>
+          <div class="row">
+            <label style="width:180px">Round ingredients ≥ 1 pour:</label>
+            <select id="sp_unitDiv_ml" style="width:160px">
+              <option value="1">1 mL</option>
+              <option value="2.5">2.5 mL</option>
+              <option value="5">5 mL</option>
+              <option value="10">10 mL</option>
+            </select>
+          </div>
+
+          <div class="row">
+            <label><input id="sp_hAcc_ml" type="checkbox"> Use smaller rounding below one pour</label>
+          </div>
+
+          <div class="row" id="sp_hAccRow_ml">
+            <label style="width:180px">Round ingredients &lt; 1 pour:</label>
+            <select id="sp_hAunitDiv_ml" style="width:160px">
+              <option value="1">1 mL</option>
+              <option value="2.5">2.5 mL</option>
+              <option value="5">5 mL</option>
+            </select>
+          </div>
+        </fieldset>
+
+        <fieldset class="panel">
+          <legend>Fat / short & small units</legend>
+          <div class="row">
+            <label><input id="sp_fatShort" type="checkbox"> Use “fat/short” callouts</label>
+          </div>
+          <div class="row">
+            <label style="width:140px"><input id="sp_useBsp" type="checkbox"> barspoon</label>
+            <input id="sp_bsp" type="number" step="0.01" style="width:90px">
+            <label style="width:120px;margin-left:12px"><input id="sp_useDash" type="checkbox"> dash</label>
+            <input id="sp_dash" type="number" step="0.01" style="width:90px">
+            <label style="width:100px;margin-left:12px"><input id="sp_useDrop" type="checkbox"> drop</label>
+            <input id="sp_drop" type="number" step="0.01" style="width:90px">
+          </div>
+          <div class="row">
+            <span class="muted" id="sp_smallText"></span>
+          </div>
+        </fieldset>
+      </section>
+
+      <!-- ===== DILUTION TAB ===== -->
+      <section id="paneCfgDilution" class="hidden" role="tabpanel" aria-labelledby="tabCfgDilution">
+        <fieldset class="panel">
+          <legend>Method multipliers</legend>
+          <div class="row">
+            <label style="width:180px">Shaken multiplier:</label>
+            <input id="dl_mult_shake" type="number" step="0.01" style="width:120px">
+          </div>
+          <div class="row">
+            <label style="width:180px">Stirred multiplier:</label>
+            <input id="dl_mult_stir" type="number" step="0.01" style="width:120px">
+          </div>
+          <div class="row">
+            <label style="width:180px">Built multiplier:</label>
+            <input id="dl_mult_built" type="number" step="0.01" style="width:120px">
+          </div>
+          <div class="row">
+            <label style="width:180px">Blender (direct dilution):</label>
+            <input id="dl_direct_blender" type="number" step="0.01" style="width:120px">
+            <span class="muted">This is applied directly (not via polynomial): d = value</span>
+          </div>
+        </fieldset>
+
+        <fieldset class="panel">
+          <legend>Base dilution equation</legend>
+          <div class="row">
+            <button id="dl_edit_poly">Edit dilution equation…</button>
+            <span class="muted">Default: −1.57·x² + 1.74·x + 0.20</span>
+          </div>
+          <div id="dl_poly_editor" class="hidden" style="margin-top:6px;">
+            <div class="row" style="color:#7f1d1d;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px;">
+              ⚠️ Advanced setting. Changing coefficients affects all computed dilutions. Proceed only if you know what you’re doing.
+            </div>
+            <div class="row">
+              <label style="width:180px">Coefficient a (x²):</label>
+              <input id="dl_coef_a" type="number" step="0.0001" style="width:120px">
+            </div>
+            <div class="row">
+              <label style="width:180px">Coefficient b (x):</label>
+              <input id="dl_coef_b" type="number" step="0.0001" style="width:120px">
+            </div>
+            <div class="row">
+              <label style="width:180px">Coefficient c:</label>
+              <input id="dl_coef_c" type="number" step="0.0001" style="width:120px">
+            </div>
+          </div>
+        </fieldset>
+      </section>
+    </div>
+
+    <!-- Shared action row -->
+    <div class="row" style="padding:10px 12px; border-top:1px solid var(--border)">
+      <span class="muted" id="sp_preview"></span>
+      <span class="right"></span>
+      <button id="cfg_reset_all" title="Reset all configuration to defaults">Reset to Defaults…</button>
+      <button id="sp_apply">Apply (session)</button>
+      <button id="sp_save">Save to my profile…</button>
+      <button id="sp_cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+
+
+  <script type="module" src="/recipes/app.js?v=optui-17"></script>
+  <!-- ===== Login Modal ===== -->
+<div id="loginModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+  <div class="modal-card" style="max-width:420px;min-width:420px">
+    <div class="modal-head">
+      <h3 id="loginTitle">Log in</h3>
+      <button class="x" aria-label="Close" id="li_cancel">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="row">
+        <label style="width:90px">Email:</label>
+        <input id="li_email" placeholder="you@example.com" autocomplete="username" style="flex:1">
+      </div>
+      <div class="row">
+        <label style="width:90px">Password:</label>
+        <input id="li_password" type="password" placeholder="••••••••" autocomplete="current-password" style="flex:1">
+      </div>
+      <div class="row">
+        <span class="right"></span>
+        <button id="li_login">Log in</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

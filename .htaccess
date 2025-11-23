@@ -1,0 +1,14 @@
+# .htaccess for LOCAL DEVELOPMENT
+# This version disables password protection for local testing
+
+# Allow everything without authentication on localhost
+<IfModule mod_authz_core.c>
+  Require all granted
+</IfModule>
+
+# Let the root favicon be fetched without auth
+<Files "favicon.ico">
+  Require all granted
+</Files>
+
+# Note: On production (Dreamhost), use the original .htaccess with authentication

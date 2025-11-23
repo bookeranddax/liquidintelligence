@@ -1,0 +1,13 @@
+/* /public/css/mixcalc.css */
+mix-calc, mix-calc * { box-sizing: border-box; font: 14px/1.4 system-ui, sans-serif; }
+mix-calc .row { display:flex; gap:.75rem; align-items:flex-end; margin:.5rem 0; flex-wrap:wrap; }
+mix-calc label { display:flex; flex-direction:column; gap:.25rem; }
+mix-calc .grid.inputs { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:.75rem; }
+mix-calc fieldset { border:1px solid #ddd; border-radius:8px; padding:.5rem .75rem; }
+mix-calc button { padding:.4rem .8rem; border-radius:8px; border:1px solid #ccc; cursor:pointer; }
+mix-calc .status { min-height: 1em; color:#555; }
+mix-calc .mixcalc-results { margin-top:1rem; border-top:1px solid #eee; padding-top:.75rem; }
+mix-calc .kv { display:grid; grid-template-columns: 1fr 1fr; gap:.25rem .75rem; margin:.5rem 0 1rem; }
+mix-calc .kv > div:nth-child(odd) { color:#555; }
+mix-calc details.diag { margin-top:.5rem; }
+mix-calc details.diag pre { white-space:pre-wrap; background:#fafafa; padding:.5rem; border:1px solid #eee; border-radius:8px; }
