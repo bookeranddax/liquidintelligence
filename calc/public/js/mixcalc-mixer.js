@@ -31,7 +31,7 @@ const num = (el) => {
   return Number.isFinite(n) ? n : null;
 };
 
-function showToast(msg) {
+function showToast(msg, type = 'error') {
   let t = document.getElementById('mix_toast');
   if (!t) {
     t = document.createElement('div');
@@ -43,12 +43,17 @@ function showToast(msg) {
     t.style.padding = '10px 12px';
     t.style.borderRadius = '8px';
     t.style.font = '14px/1.3 system-ui, sans-serif';
-    t.style.background = 'rgba(220, 38, 38, 0.95)'; // red-ish
     t.style.color = '#fff';
     t.style.zIndex = '99999';
     t.style.boxShadow = '0 6px 20px rgba(0,0,0,.25)';
     t.style.opacity = '0';
     document.body.appendChild(t);
+  }
+  // Set background color based on type
+  if (type === 'success') {
+    t.style.background = 'rgba(34, 197, 94, 0.95)'; // green
+  } else {
+    t.style.background = 'rgba(220, 38, 38, 0.95)'; // red
   }
   t.textContent = msg;
   t.style.opacity = '1';
@@ -242,6 +247,17 @@ function bindRow(row){
   let solving=false, filling=false, tid=null;
 
   function enforceOneOf(key){
+    // Check if row is already solved (all 4 composition values present)
+    const abmTxt = (I.abm?.value||'').trim();
+    const sbmTxt = (I.sbm?.value||'').trim();
+    const abvTxt = (I.abv?.value||'').trim();
+    const swvTxt = (I.swv?.value||'').trim();
+    const isAlreadySolved = abmTxt && sbmTxt && abvTxt && swvTxt;
+
+    // If row is already solved, allow editing any field - don't enforce one-of rule
+    if (isAlreadySolved) return;
+
+    // For incomplete rows, enforce one-of rule (can't mix ABM+ABV or SBM+SWV)
     const pairs = [['abm','abv'], ['sbm','swv']];
     for (const [a,b] of pairs){
       if (key!==a && key!==b) continue;
@@ -540,7 +556,7 @@ async function matchTargetUsingInputs() {
   const w = Math.max(0, 1 - a - s);
   if (a<=0 && s<=0 && w<=0) { showToast('Desired composition is invalid.'); return; }
 
-  // 2) read existing inputs
+  // 2) read existing inputs (skip additive placeholder rows)
   const tbody = document.getElementById('mix_rows');
   const rows  = Array.from(tbody.querySelectorAll(':scope>tr'));
   const held  = [];
@@ -551,11 +567,22 @@ async function matchTargetUsingInputs() {
       .some(el => (el.type!=='checkbox' && String(el.value||'').trim()!==''));
     if (!anyVal) continue;
 
+    // Skip additive placeholder rows (Water/Ethanol/Dry Sugar with no quantity)
+    const name = tr.querySelector('.mix_name')?.value?.trim().toLowerCase();
+    const hasQty = num(tr.querySelector('.mix_g')) || num(tr.querySelector('.mix_ml'));
+    if (['water', 'ethanol', 'dry sugar'].includes(name) && !hasQty) continue;
+
     const masses = rowMasses(tr);
     if (!masses.ok) continue;
 
     const isHeld = tr.querySelector('.mix_hold')?.checked;
     (isHeld ? held : free).push({tr, ...masses});
+  }
+
+  // Check if we have any inputs at all
+  if (held.length === 0 && free.length === 0) {
+    showToast('Add at least one ingredient before matching target.');
+    return;
   }
 
   const sum = arr => arr.reduce((acc,x)=>({E:acc.E+x.E,S:acc.S+x.S,W:acc.W+x.W,G:acc.G+x.G}),{E:0,S:0,W:0,G:0});
@@ -564,6 +591,7 @@ async function matchTargetUsingInputs() {
 
   // 3) Decide final mass G* and needed additives
   let Gstar = null;
+  let addE = 0, addS = 0, addW = 0;
 
   if (d.hold && (Number.isFinite(d.g) || Number.isFinite(d.ml))) {
     // Desired quantity is held
@@ -577,42 +605,21 @@ async function matchTargetUsingInputs() {
     if (!Number.isFinite(Gd) || Gd<=0) { showToast('Desired amount is invalid.'); return; }
     Gstar = Gd;
 
-    // If held rows alone exceed any fraction requirement, infeasible
-    if (H.E > a*Gstar || H.S > s*Gstar || H.W > w*Gstar) {
-      // try scaling free rows down (r in [0,1])
-      const rE = F.E>0 ? (a*Gstar - H.E)/F.E : 1;
-      const rS = F.S>0 ? (s*Gstar - H.S)/F.S : 1;
-      const rW = F.W>0 ? (w*Gstar - H.W)/F.W : 1;
-      const r  = Math.min(rE, rS, rW);
-      if (!(r>=0 && isFinite(r))) { showToast('Target infeasible with held amounts.'); return; }
-      // scale non-held rows
-      for (const it of free) {
-        const newG = it.G * Math.max(0, Math.min(1, r));
-        setRowGrams(it.tr, newG); // clears mL; mirror will refill on next recalc
-      }
-      // recompute sums
-      const F2 = sum(free.map(x => {
-        const newG = x.G * Math.max(0, Math.min(1, r));
-        const fa = x.E/x.G, fs = x.S/x.G, fw = x.W/x.G;
-        return {E:fa*newG, S:fs*newG, W:fw*newG, G:newG};
-      }));
-      const E1 = H.E + F2.E, S1 = H.S + F2.S, W1 = H.W + F2.W;
-      // additives now (non-negative by construction)
-      const addE = Math.max(0, a*Gstar - E1);
-      const addS = Math.max(0, s*Gstar - S1);
-      const addW = Math.max(0, w*Gstar - W1);
-      setRowGrams(ensureAdditiveRow('ethanol'), addE);
-      setRowGrams(ensureAdditiveRow('sugar'),   addS);
-      setRowGrams(ensureAdditiveRow('water'),   addW);
-    } else {
-      // held rows OK; use all free rows fully (max extent), and top up with additives if needed
-      const addE = Math.max(0, a*Gstar - E0);
-      const addS = Math.max(0, s*Gstar - S0);
-      const addW = Math.max(0, w*Gstar - W0);
-      setRowGrams(ensureAdditiveRow('ethanol'), addE);
-      setRowGrams(ensureAdditiveRow('sugar'),   addS);
-      setRowGrams(ensureAdditiveRow('water'),   addW);
+    // Check if held rows alone exceed any fraction requirement
+    if (H.E > a*Gstar + 0.01 || H.S > s*Gstar + 0.01 || H.W > w*Gstar + 0.01) {
+      const exceeded = [];
+      if (H.E > a*Gstar + 0.01) exceeded.push(`ethanol (have ${H.E.toFixed(1)}g, need ${(a*Gstar).toFixed(1)}g)`);
+      if (H.S > s*Gstar + 0.01) exceeded.push(`sugar (have ${H.S.toFixed(1)}g, need ${(s*Gstar).toFixed(1)}g)`);
+      if (H.W > w*Gstar + 0.01) exceeded.push(`water (have ${H.W.toFixed(1)}g, need ${(w*Gstar).toFixed(1)}g)`);
+      showToast(`Target impossible: held ingredients exceed target for ${exceeded.join(', ')}.`);
+      return;
     }
+
+    // Use all inputs (held + free) and calculate what's needed
+    addE = Math.max(0, a*Gstar - E0);
+    addS = Math.max(0, s*Gstar - S0);
+    addW = Math.max(0, w*Gstar - W0);
+
   } else {
     // Desired qty not held: choose MIN final mass that satisfies target with existing inputs
     // G* >= max(G0, E0/a, S0/s, W0/w) (skip terms with zero denominator)
@@ -622,15 +629,41 @@ async function matchTargetUsingInputs() {
     if (w>0) cand.push(W0/w);
     Gstar = Math.max(...cand.filter(x => Number.isFinite(x)));
 
-    const addE = Math.max(0, a*Gstar - E0);
-    const addS = Math.max(0, s*Gstar - S0);
-    const addW = Math.max(0, w*Gstar - W0);
-    setRowGrams(ensureAdditiveRow('ethanol'), addE);
-    setRowGrams(ensureAdditiveRow('sugar'),   addS);
-    setRowGrams(ensureAdditiveRow('water'),   addW);
+    addE = Math.max(0, a*Gstar - E0);
+    addS = Math.max(0, s*Gstar - S0);
+    addW = Math.max(0, w*Gstar - W0);
   }
 
-  showToast('Target matched using existing inputs; added ethanol/sugar/water as needed.');
+  // 4) Only create additive rows when amount > 0.01g
+  let addedAny = false;
+  const parts = [];
+
+  if (addE > 0.01) {
+    setRowGrams(ensureAdditiveRow('ethanol'), addE);
+    parts.push(`Ethanol ${addE.toFixed(1)}g`);
+    addedAny = true;
+  }
+
+  if (addS > 0.01) {
+    setRowGrams(ensureAdditiveRow('sugar'), addS);
+    parts.push(`Sugar ${addS.toFixed(1)}g`);
+    addedAny = true;
+  }
+
+  if (addW > 0.01) {
+    setRowGrams(ensureAdditiveRow('water'), addW);
+    parts.push(`Water ${addW.toFixed(1)}g`);
+    addedAny = true;
+  }
+
+  // 5) Show success message with green toast
+  const finalMass = G0 + addE + addS + addW;
+  if (addedAny) {
+    showToast(`Target matched! Added: ${parts.join(', ')}. Final: ${finalMass.toFixed(1)}g`, 'success');
+  } else {
+    showToast(`Target matched using existing inputs only! Final: ${finalMass.toFixed(1)}g`, 'success');
+  }
+
   calcMixDebounced();
 }
 
