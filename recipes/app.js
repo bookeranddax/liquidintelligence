@@ -2,7 +2,7 @@
 import { makeCombo } from './combobox.js';
 import { setSpokenProfile as applySpokenProfile, toSpokenProfiled, getSpokenProfile } from './spoken.js';
 
-const API_BASE = '/liquidintelligence/recipes/api';
+const API_BASE = './api';
 console.info('[Cocktail Analyzer] UI v=optui-17');
 
 // ---------- helpers ----------
