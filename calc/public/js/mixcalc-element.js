@@ -106,7 +106,7 @@ class MixCalcElement extends HTMLElement {
     const status = form.querySelector('.status');
     const results = this.shadowRoot.querySelector('.mixcalc-results');
     const diag = results.querySelector('.json');
-    const endpoint = this.getAttribute('endpoint') || '/calc/api/solve.php';
+    const endpoint = this.getAttribute('endpoint') || './api/solve.php';
 
     const defaultMode = this.getAttribute('default-mode') || 'brix_density';
     select.value = defaultMode;

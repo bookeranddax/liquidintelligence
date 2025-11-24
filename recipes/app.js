@@ -1,8 +1,8 @@
 // /recipes/app.js
-import { makeCombo } from '/recipes/combobox.js';
-import { setSpokenProfile as applySpokenProfile, toSpokenProfiled, getSpokenProfile } from '/recipes/spoken.js';
+import { makeCombo } from './combobox.js';
+import { setSpokenProfile as applySpokenProfile, toSpokenProfiled, getSpokenProfile } from './spoken.js';
 
-const API_BASE = '/recipes/api';
+const API_BASE = './api';
 console.info('[Cocktail Analyzer] UI v=optui-17');
 
 // ---------- helpers ----------

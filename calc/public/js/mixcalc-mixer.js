@@ -67,10 +67,10 @@ function mixTemp() {
 
 // ---------- API wrappers ----------
 async function solveFrom_ABM_SBM(ABM, SBM, T) {
-  return await solve({ mode:'abm_sbm', abm:ABM, sbm:SBM, report_T:T }, { endpoint:'/calc/api/solve.php' });
+  return await solve({ mode:'abm_sbm', abm:ABM, sbm:SBM, report_T:T }, { endpoint:'./api/solve.php' });
 }
 async function solveFrom_ABV_SWV(ABV, SWV, T) {
-  return await solve({ mode:'abv_sugarwv', ABV, ABV_T:T, Sugar_WV:SWV, Sugar_WV_T:T, report_T:T }, { endpoint:'/calc/api/solve.php' });
+  return await solve({ mode:'abv_sugarwv', ABV, ABV_T:T, Sugar_WV:SWV, Sugar_WV_T:T, report_T:T }, { endpoint:'./api/solve.php' });
 }
 
 // ---------- per-row state ----------
@@ -530,7 +530,7 @@ async function matchTargetUsingInputs() {
     a = Math.max(0, Math.min(1, d.abm/100));
     s = Math.max(0, Math.min(1, d.sbm/100));
   } else if (Number.isFinite(d.abv) && Number.isFinite(d.swv)) {
-    const json = await solve({ mode:'abv_sugarwv', ABV:d.abv, ABV_T:T, Sugar_WV:d.swv, Sugar_WV_T:T, report_T:T }, {endpoint:'/calc/api/solve.php'});
+    const json = await solve({ mode:'abv_sugarwv', ABV:d.abv, ABV_T:T, Sugar_WV:d.swv, Sugar_WV_T:T, report_T:T }, {endpoint:'./api/solve.php'});
     if (!json || json.ok!==true) { showToast('Cannot interpret Desired ABV/Sugar.'); return; }
     a = Math.max(0, Math.min(1, (json.abm||0)/100));
     s = Math.max(0, Math.min(1, (json.sbm||0)/100));
@@ -570,7 +570,7 @@ async function matchTargetUsingInputs() {
     let Gd = Number.isFinite(d.g) ? d.g : null;
     if (Gd==null && Number.isFinite(d.ml)) {
       // estimate rho at target — quick single call
-      const j = await solve({ mode:'abm_sbm', ABM:a*100, SBM:s*100, report_T:T }, {endpoint:'/calc/api/solve.php'});
+      const j = await solve({ mode:'abm_sbm', ABM:a*100, SBM:s*100, report_T:T }, {endpoint:'./api/solve.php'});
       if (!j || j.ok!==true || !(j.outputs&&j.outputs.Density>0)) { showToast('Cannot estimate target density to convert mL to g.'); return; }
       Gd = d.ml * j.outputs.Density;
     }

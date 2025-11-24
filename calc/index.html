@@ -789,7 +789,7 @@ tr.mix_invalid input {
 
       async function safeSolve(payload){
         try{
-          const json = await solve(payload, { endpoint:'/calc/api/solve.php' });
+          const json = await solve(payload, { endpoint:'./api/solve.php' });
           return json;
         }catch(e){
           blankOutputs();

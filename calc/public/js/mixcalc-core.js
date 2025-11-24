@@ -1,5 +1,5 @@
 // /public/js/mixcalc-core.js
-export async function solve(payload, { endpoint = '/calc/api/solve.php', signal } = {}) {
+export async function solve(payload, { endpoint = './api/solve.php', signal } = {}) {
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
