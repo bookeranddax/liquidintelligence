@@ -1,0 +1,29 @@
+# Ignore configuration files with passwords
+config.php
+
+# Ignore .htaccess files (different for local vs production)
+.htaccess
+calc/.htaccess
+
+# Ignore environment-specific files
+.env
+*.local
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore logs
+*.log
+error_log
+
+# Ignore backup files
+*.backup
+*.bak
+*~
