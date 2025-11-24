@@ -49,7 +49,7 @@ function SPOKEN_DEFAULTS(){
 
 
 async function fetchSpokenProfile(){
-  const r = await fetch('/recipes/api/spoken_config.php', { credentials: 'same-origin' });
+  const r = await fetch(`${API_BASE}/spoken_config.php`, { credentials: 'same-origin' });
   const text = await r.text();
 
   let j;
@@ -299,7 +299,7 @@ async function saveProfileToServer(cfg){
   const name = prompt('Save as (profile name):', 'My spoken setup');
   if (name === null) return; // cancelled
 
-  const r = await fetch('/recipes/api/spoken_profiles_save.php', {
+  const r = await fetch(`${API_BASE}/spoken_profiles_save.php`, {
     method:'POST',
     credentials:'same-origin',
     headers:{
@@ -331,7 +331,7 @@ async function saveProfileToServer(cfg){
   }
 
   if (j.id){
-    await fetch('/recipes/api/spoken_profile_select.php', {
+    await fetch(`${API_BASE}/spoken_profile_select.php`, {
       method:'POST',
       credentials:'same-origin',
       headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},
@@ -1058,7 +1058,7 @@ async function loadRecipes(drinkId){
     if (!drink_id) throw new Error('No drink selected');
 
     const order = collectOrder();
-    const r = await fetch('/recipes/api/recipes_reorder.php', {
+    const r = await fetch(`${API_BASE}/recipes_reorder.php`, {
       method:'POST',
       credentials:'same-origin',
       headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},
@@ -1597,7 +1597,7 @@ addBtn?.addEventListener('click', async () => {
 
       const order = rows.map(r => ({ id: r.id }));
       try{
-        const resp = await fetch('/recipes/api/recipes_reorder.php', {
+        const resp = await fetch(`${API_BASE}/recipes_reorder.php`, {
           method:'POST',
           credentials:'same-origin',
           headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},
