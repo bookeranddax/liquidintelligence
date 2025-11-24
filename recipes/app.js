@@ -1,6 +1,6 @@
 // /recipes/app.js
-import { makeCombo } from '/liquidintelligence/recipes/combobox.js';
-import { setSpokenProfile as applySpokenProfile, toSpokenProfiled, getSpokenProfile } from '/liquidintelligence/recipes/spoken.js';
+import { makeCombo } from './combobox.js';
+import { setSpokenProfile as applySpokenProfile, toSpokenProfiled, getSpokenProfile } from './spoken.js';
 
 const API_BASE = '/liquidintelligence/recipes/api';
 console.info('[Cocktail Analyzer] UI v=optui-17');
